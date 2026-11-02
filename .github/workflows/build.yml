@@ -1,0 +1,110 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write   # tag pushes create a GitHub Release
+
+jobs:
+  build:
+    name: build (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # chip and where the bootloader goes in the merged image (S3: 0x0, classic ESP32: 0x1000)
+        include:
+          - {env: cyd40,      chip: esp32,   boot: "0x1000"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
+      - run: pip install platformio esptool==4.8.1
+
+      - name: Build firmware
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Build merged flash image
+        run: |
+          B=.pio/build/${{ matrix.env }}
+          mkdir -p dist
+          BOOT=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -1)
+          # factory = the complete image, flashed at offset 0 (DIO, like the other CYD projects)
+          esptool.py --chip ${{ matrix.chip }} merge_bin \
+            -o dist/Show-Jumping-${{ matrix.env }}-factory.bin \
+            --flash_mode dio --flash_freq keep --flash_size keep \
+            ${{ matrix.boot }} $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 "$BOOT" 0x10000 $B/firmware.bin
+          # update = the app only, for the web page's /update and espota.py (keeps WiFi and settings)
+          cp $B/firmware.bin dist/Show-Jumping-${{ matrix.env }}-update.bin
+          ls -l dist
+
+      - name: Check the image is DIO
+        run: |
+          python3 - <<'EOF'
+          d = open("dist/Show-Jumping-${{ matrix.env }}-factory.bin", "rb").read()
+          off = int("${{ matrix.boot }}", 16)
+          assert d[off] == 0xE9, "no image header at the bootloader offset"
+          assert d[off + 2] == 0x02, f"flash mode byte is {d[off + 2]:#x}, expected 0x02 (DIO)"
+          print("DIO header OK")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.env }}
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the tag's annotation is the "What's new" text
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - name: Write the release notes
+        run: bash .github/release_notes.sh "$GITHUB_REF_NAME" > release_notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Show Jumping ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}   # a tag like v1.1-beta1 is marked pre-release
+          body_path: release_notes.md
+          files: dist/*
+
+  # Refresh the web installer (GitHub Pages serves docs/ from main): same images as the release,
+  # new version labels, committed to main by the bot. Not for pre-release tags like v1.1-beta1.
+  installer:
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Refresh the web installer
+        run: |
+          bash .github/update_installer.sh "$GITHUB_REF_NAME" dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          if git diff --cached --quiet; then echo "installer already up to date"; exit 0; fi
+          git commit -m "$GITHUB_REF_NAME: installer and files for the CYD 4.0"
+          git pull --rebase origin main
+          git push origin HEAD:main
