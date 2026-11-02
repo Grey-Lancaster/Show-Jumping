@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "0.1.0"
+#define FW_VERSION "0.1.1"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -69,7 +69,7 @@ static float scaleAt(float y) { return 0.82f + 0.40f * (y - 204) / 78.0f; }    /
 
 // ---------------------------------------------------------------- riders and horses (made up)
 struct Coat { uint16_t body, shade, mane, lower; };
-struct Rider { const char *name, *horse; uint8_t coat; uint16_t jacket; };
+struct Rider { const char *name, *horse; uint8_t coat; uint16_t jacket; float pace; };   // pace: canter speed, 1 = average
 static Coat COATS[4];
 static Rider RIDERS[8];
 #define NRIDERS 8
@@ -79,14 +79,14 @@ static void initRiders() {
   COATS[1] = {RGB(184, 102, 50), RGB(138, 70, 32), RGB(156, 76, 32), RGB(170, 92, 44)};    // chestnut
   COATS[2] = {RGB(212, 212, 206), RGB(162, 162, 158), RGB(120, 120, 120), RGB(150, 150, 146)};   // grey
   COATS[3] = {RGB(44, 38, 36), RGB(26, 24, 22), RGB(14, 14, 14), RGB(232, 230, 224)};      // black with white socks
-  RIDERS[0] = {"Emma", "Thunder", 0, RGB(24, 40, 90)};
-  RIDERS[1] = {"Lucas", "Biscuit", 1, RGB(20, 20, 24)};
-  RIDERS[2] = {"Sofia", "Starlight", 2, RGB(150, 24, 32)};
-  RIDERS[3] = {"Jack", "Maverick", 3, RGB(24, 80, 50)};
-  RIDERS[4] = {"Mia", "Clover", 1, RGB(24, 40, 90)};
-  RIDERS[5] = {"Oliver", "Duke", 0, RGB(110, 20, 60)};
-  RIDERS[6] = {"Ava", "Silver", 2, RGB(20, 20, 24)};
-  RIDERS[7] = {"Noah", "Midnight", 3, RGB(150, 24, 32)};
+  RIDERS[0] = {"Emma", "Thunder", 0, RGB(24, 40, 90), 1.06f};
+  RIDERS[1] = {"Lucas", "Biscuit", 1, RGB(20, 20, 24), 0.94f};
+  RIDERS[2] = {"Sofia", "Starlight", 2, RGB(150, 24, 32), 1.03f};
+  RIDERS[3] = {"Jack", "Maverick", 3, RGB(24, 80, 50), 1.08f};
+  RIDERS[4] = {"Mia", "Clover", 1, RGB(24, 40, 90), 0.97f};
+  RIDERS[5] = {"Oliver", "Duke", 0, RGB(110, 20, 60), 1.0f};
+  RIDERS[6] = {"Ava", "Silver", 2, RGB(20, 20, 24), 0.92f};
+  RIDERS[7] = {"Noah", "Midnight", 3, RGB(150, 24, 32), 1.04f};
 }
 
 // ---------------------------------------------------------------- the course
@@ -123,6 +123,7 @@ struct Horse {
   float jx0, jlen, jH, u;   // jump: take-off x, length (screen px), peak lift (local units), progress 0..1
   float err;          // the auto rider's take-off error for the next fence (local units)
   bool turning;       // off screen at the end of the ring, coming round to the far line
+  float pace;         // this round's speed: the horse's own pace, a little faster or slower on the day
   float turnT;
 };
 static Horse horse;
@@ -156,6 +157,7 @@ static void startRide() {
   resetCourse();
   rnd.st = R_RIDE; rnd.t = 0; rnd.time = 0; rnd.timing = false; rnd.started = false; rnd.faults = 0; rnd.nf = 0;
   horse.x = -70; horse.lane = 0; horse.dir = 1; horse.air = false; horse.turning = false; horse.err = autoErr();
+  horse.pace = RIDERS[rnd.rider].pace * (0.97f + random(61) / 1000.0f);
   audioBell();
 }
 
@@ -201,7 +203,7 @@ static void updateRound(float dt) {
     if (horse.turnT <= 0) { horse.turning = false; horse.lane = 1; horse.dir = -1; horse.x = VW + 70; horse.err = autoErr(); }
   } else if (horse.x > -90 && horse.x < VW + 90) {
     const float s = scaleAt(LANE_Y[horse.lane]);
-    const float v = 118 * s;
+    const float v = 118 * s * horse.pace;
     horse.x += horse.dir * v * dt;
     const bool onScreen = horse.x > -40 && horse.x < VW + 40;
     if (horse.air) {
@@ -601,7 +603,7 @@ static void renderBackground(Canvas &c) {
   }
   c.fillRect(0, 112, VW, 1, RGB(240, 240, 230));
   // advertising boards round the arena
-  static const char *ADS[6] = {"GRAND PRIX", "SHOW JUMPING", "CLEAR ROUND", "CYD 4.0", "HORSE OF THE YEAR", "SADDLE CLUB"};
+  static const char *ADS[6] = {"GRAND PRIX", "SHOW JUMPING", "CLEAR ROUND", "CYD 4.0", "HORSE SHOW", "SADDLE CLUB"};
   uint16_t ADC[4] = {RGB(190, 36, 36), RGB(30, 74, 156), RGB(28, 120, 70), RGB(220, 160, 30)};
   for (int i = 0; i < 6; i++) {
     const float x = i * 80 + 4;
