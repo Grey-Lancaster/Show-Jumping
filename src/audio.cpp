@@ -78,6 +78,16 @@ static float applauseSample(uint32_t n, uint32_t len) {
   return v * env * 0.45f;
 }
 
+// ---- the tractor: a little diesel putt-putt, a low thump about 13 times a second
+static volatile bool engineOn = false;
+void audioEngine(bool on) { engineOn = on; }
+static float engineSample(uint32_t n) {
+  const uint32_t per = SR / 13, k = n % per;
+  const float t = k / (float)SR;
+  return expf(-t * 55.0f) * (0.55f * sinC(62.0f * t) + 0.25f * noise() * expf(-t * 120.0f)) * 0.5f;
+}
+static uint32_t enginePos = 0;
+
 static inline void add(int32_t &acc, float v) { acc += (int32_t)(v * 20000.0f); }
 
 void audioMix(int16_t *out, int n) {
@@ -92,6 +102,7 @@ void audioMix(int16_t *out, int n) {
     if (knockPos != IDLE) { add(acc, knockSample(knockPos)); if (++knockPos > SR * 7 / 10) knockPos = IDLE; }
     if (bellPos != IDLE) { add(acc, bellSample(bellPos)); if (++bellPos > SR * 3 / 2) bellPos = IDLE; }
     if (clapPos != IDLE) { add(acc, applauseSample(clapPos, clapLen)); if (++clapPos >= clapLen) clapPos = IDLE; }
+    if (engineOn) add(acc, engineSample(enginePos++));
     acc = on ? (acc * (int32_t)g_vol) / 60 : 0;
     out[i] = (int16_t)constrain(acc, -32768, 32767);
   }

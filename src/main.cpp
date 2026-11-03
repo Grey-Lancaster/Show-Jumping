@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "0.1.6"
+#define FW_VERSION "0.1.7"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -120,7 +120,7 @@ static float fenceTop(const Fence &f) { float h = 0; for (int k = 0; k < f.np; k
 static float jumpLen(const Fence &f) { return f.type == F_OXER ? 130 : 112; }   // take-off to landing, local units
 
 // ---------------------------------------------------------------- the round
-enum RoundSt { R_WAIT, R_RIDE, R_DONE };
+enum RoundSt { R_WAIT, R_RIDE, R_DONE, R_RAKE };   // R_RAKE: the tractor is out
 struct Horse {
   float x;            // screen x of the barrel's middle
   int lane, dir;
@@ -209,9 +209,54 @@ static void tapJump() {
 
 static float liftNow() { return horse.air ? 4 * horse.jH * horse.u * (1 - horse.u) : 0; }
 
+// ---------------------------------------------------------------- the arena tractor
+// Every few rounds a little tractor drags a rake round the ring: along the front, round the right-hand end and back
+// along the far side behind the fences, while a sponsor's ad goes up over the stands.
+#define TRACTOR_EVERY 1           // rounds between rakes (every round for now, to watch it; 5 later)
+#define RAKE_NEAR 306             // its path along the front of the ring (nearer than every fence)
+#define RAKE_FAR 172              // and back along the far side (behind every fence)
+#define RAKE_CX 404               // the turn at the right-hand end
+#define RAKE_R 46
+struct Tractor { int leg; float x, gy, th, wheel; int dir; };   // leg: 0 front, 1 the turn, 2 far side, 3 gone
+static Tractor tractor = {3, 0, 0, 0, 0, 1};
+static int roundsSinceRake = 0;
+
+static void startRake() {
+  rnd.st = R_RAKE; rnd.t = 0;
+  tractor = {0, -70, RAKE_NEAR, 0, 0, 1};
+  audioEngine(true);
+}
+
+static bool updateTractor(float dt) {          // true once it has driven off
+  if (tractor.leg >= 3) return true;
+  const float v = 110 * scaleAt(tractor.gy);
+  tractor.wheel += v * dt;
+  if (tractor.leg == 0) {
+    tractor.x += v * dt;
+    if (tractor.x >= RAKE_CX) { tractor.leg = 1; tractor.th = 0; }
+  } else if (tractor.leg == 1) {
+    const float half = (RAKE_NEAR - RAKE_FAR) * 0.5f;
+    tractor.th += v * dt / (sqrtf(sq(RAKE_R * cosf(tractor.th)) + sq(half * sinf(tractor.th))) + 1);
+    if (tractor.th >= PI) { tractor.leg = 2; tractor.x = RAKE_CX; tractor.gy = RAKE_FAR; tractor.dir = -1; }
+    else {
+      tractor.x = RAKE_CX + RAKE_R * sinf(tractor.th);
+      tractor.gy = RAKE_FAR + half + half * cosf(tractor.th);
+      tractor.dir = tractor.th < PI / 2 ? 1 : -1;
+    }
+  } else {
+    tractor.x -= v * dt;
+    if (tractor.x < -90) { tractor.leg = 3; audioEngine(false); return true; }
+  }
+  return false;
+}
+
 static void updateRound(float dt) {
   rnd.t += dt;
   for (auto &f : fences) for (int k = 0; k < f.np; k++) if (f.p[k].fall > 0) f.p[k].fall += dt;
+  if (rnd.st == R_RAKE) {
+    if (updateTractor(dt)) { roundsSinceRake = 0; nextRider(); }
+    return;
+  }
   if (rnd.st == R_WAIT) {
     if (rnd.t > 3.5f) startRide();
     return;
@@ -322,7 +367,9 @@ static void updateRound(float dt) {
     }
     if (horse.lane == 0 && approaching && !horse.turning && !horse.air && horse.x >= TURN_X && rnd.st == R_RIDE) { horse.turning = true; horse.th = 0; horse.tx0 = horse.x; }
   }
-  if (rnd.st == R_DONE && rnd.t > 8) nextRider();
+  if (rnd.st == R_DONE && rnd.t > 8 && (horse.x < -80 || horse.x > VW + 80)) {
+    if (++roundsSinceRake >= TRACTOR_EVERY) startRake(); else nextRider();
+  }
 }
 
 // ---------------------------------------------------------------- drawing: fences
@@ -611,10 +658,12 @@ static void drawScoreboard() {
     panel(4, 3, 236, 46);
     cv.setTextDatum(TL_DATUM);
     cv.setTextColor(RGB(255, 255, 255));
-    snprintf(b, sizeof(b), "%s on %s", riderName(), RIDERS[rnd.rider].horse);
+    if (rnd.st == R_RAKE) snprintf(b, sizeof(b), "Arena break");
+    else snprintf(b, sizeof(b), "%s on %s", riderName(), RIDERS[rnd.rider].horse);
     cv.drawString(b, 12, 8, 2);
     cv.setTextColor(RGB(250, 214, 80));
-    snprintf(b, sizeof(b), "Time %.1f   Faults %d", rnd.time, rnd.faults);
+    if (rnd.st == R_RAKE) snprintf(b, sizeof(b), "Raking the ring");
+    else snprintf(b, sizeof(b), "Time %.1f   Faults %d", rnd.time, rnd.faults);
     cv.drawString(b, 12, 27, 2);
     panel(VW - 200, 3, 196, 26);
     cv.setTextColor(RGB(234, 234, 220));
@@ -654,14 +703,95 @@ static void drawScoreboard() {
 
 static void drawInfo(uint32_t now);
 
+// ---------------------------------------------------------------- drawing: the tractor, its rake marks, the sponsor ad
+static void tpt(float lx, float ly, float s, float &X, float &Y) { X = tractor.x + tractor.dir * lx * s; Y = tractor.gy - ly * s; }
+static void tRect(float x0, float y0, float x1, float y1, float s, uint16_t c) {   // local box, x0 < x1, y0 < y1
+  float ax, ay, bx, by; tpt(x0, y1, s, ax, ay); tpt(x1, y0, s, bx, by);
+  cv.fillRect(min(ax, bx), ay, fabsf(bx - ax), by - ay, c);
+}
+static void tCircle(float lx, float ly, float r, float s, uint16_t c) { float X, Y; tpt(lx, ly, s, X, Y); cv.fillCircle(X, Y, r * s, c); }
+static void tLine(float x0, float y0, float x1, float y1, float w, float s, uint16_t c) {
+  float a, b, e, f; tpt(x0, y0, s, a, b); tpt(x1, y1, s, e, f); cv.drawWideLine(a, b, e, f, w * s, c, c);
+}
+
+// Freshly raked sand: light combed stripes along the path the rake has covered so far (until the next ride starts).
+static void drawRakeMarks() {
+  if (!(rnd.st == R_RAKE || (rnd.st == R_WAIT && tractor.leg >= 3 && roundsSinceRake == 0))) return;
+  const uint16_t c = RGB(234, 212, 168);
+  for (int k = 0; k < 2; k++) {
+    const float gy = k == 0 ? RAKE_NEAR : RAKE_FAR, s = scaleAt(gy);
+    float x0, x1;
+    if (k == 0) { x0 = -10; x1 = tractor.leg == 0 ? tractor.x - 38 * s : RAKE_CX; }
+    else { if (tractor.leg < 2) continue; x0 = tractor.leg == 2 ? tractor.x + 38 * s : -10; x1 = RAKE_CX; }
+    if (x1 <= x0 || !cv.visible(gy - 6 * s, gy + 6 * s)) continue;
+    for (int r = -2; r <= 2; r++) cv.fillRect(x0, gy + r * 2.2f * s, x1 - x0, 1, c);
+  }
+}
+
+static void drawTractor() {
+  if (tractor.leg >= 3 || tractor.x < -100 || tractor.x > VW + 100) return;
+  const float s = scaleAt(tractor.gy) * 1.25f;
+  if (!cv.visible(tractor.gy - 40 * s, tractor.gy + 4 * s)) return;
+  const uint16_t red = RGB(200, 40, 34), dark = RGB(40, 40, 44), steel = RGB(150, 150, 156), tyre = RGB(24, 24, 26), yel = RGB(240, 200, 60);
+  cv.fillEllipse(tractor.x - tractor.dir * 12 * s, tractor.gy + 1, 34 * s, 3 * s, g_sandDark);      // shadow
+  // the rake: a drawbar back to a frame of tines combing the sand, with a little dust behind
+  tLine(-17, 7, -30, 4, 1.6f, s, dark);
+  tRect(-52, 3, -30, 6, s, steel);
+  for (float x = -51; x <= -31; x += 4) tLine(x, 3, x - 1.5f, 0, 1.0f, s, dark);
+  for (int i = 0; i < 3; i++) {
+    const float a = fmodf(curT * 1.5f + i / 3.0f, 1.0f);
+    tCircle(-55 - a * 12, 2 + a * 5, 2 + a * 3, s, mix(214, 186, 140, 236, 222, 196, a));
+  }
+  // body, cab, driver, exhaust
+  tRect(-4, 9, 27, 20, s, red);
+  tRect(22, 11, 28, 18, s, steel);                     // grille
+  tRect(-15, 12, 1, 34, s, dark);                      // cab frame
+  tRect(-13, 20, -1, 31, s, RGB(170, 210, 236));       // window
+  tCircle(-6, 26, 3, s, RGB(236, 192, 160));           // driver
+  tRect(-9, 28, -3, 30, s, RGB(40, 90, 190));          // his cap
+  tRect(-17, 33, 3, 36, s, red);                       // roof
+  tLine(15, 20, 15, 29, 1.6f, s, dark);                // exhaust
+  for (int i = 0; i < 3; i++) {
+    const float a = fmodf(curT * 1.2f + i / 3.0f, 1.0f);
+    tCircle(15 - a * 8, 31 + a * 12, 1.5f + a * 2.5f, s, mix(120, 120, 124, 200, 204, 210, a));
+  }
+  // wheels, turning
+  const float spin = tractor.wheel * 0.25f;
+  tCircle(-8, 11, 11, s, tyre); tCircle(-8, 11, 4.5f, s, yel);
+  tLine(-8 + 9 * cosf(spin), 11 + 9 * sinf(spin), -8 - 9 * cosf(spin), 11 - 9 * sinf(spin), 1.2f, s, RGB(60, 60, 64));
+  tCircle(20, 6, 6, s, tyre); tCircle(20, 6, 2.4f, s, yel);
+}
+
+// The sponsor's board over the stands while the tractor is out.
+static void drawSponsor() {
+  if (rnd.st != R_RAKE || !cv.visible(54, 112)) return;
+  cv.fillRoundRect(96, 56, 288, 54, 8, RGB(206, 210, 216));
+  cv.drawRoundRect(96, 56, 288, 54, 8, RGB(255, 255, 255));
+  cv.drawRoundRect(98, 58, 284, 50, 7, RGB(130, 134, 142));
+  // a silver spoon
+  cv.fillEllipse(128, 72, 8, 11, RGB(150, 154, 162));
+  cv.fillEllipse(127, 71, 6, 9, RGB(236, 238, 242));
+  cv.drawWideLine(128, 82, 128, 102, 3, RGB(150, 154, 162), RGB(150, 154, 162));
+  cv.setTextDatum(MC_DATUM);
+  cv.setTextColor(RGB(60, 64, 72));
+  cv.drawString("Visit the", 258, 69, 2);
+  cv.setTextColor(RGB(24, 28, 36));
+  cv.drawString("Silver Spoon", 258, 92, 4);
+}
+
 static void drawScene(float t) {
   drawFlags(t);
   drawClapping();
+  drawSponsor();
+  drawRakeMarks();
+  const bool tractorBehind = tractor.gy < (LANE_Y[0] + LANE_Y[1]) * 0.5f;
+  if (tractorBehind) drawTractor();
   for (int lane = 1; lane >= 0; lane--) {       // far line first
     for (auto &f : fences) if (f.lane == lane) drawFence(f, false);
     if ((horse.gy < (LANE_Y[0] + LANE_Y[1]) * 0.5f ? 1 : 0) == lane) drawHorse();
     for (auto &f : fences) if (f.lane == lane) drawFence(f, true);
   }
+  if (!tractorBehind) drawTractor();
   drawScoreboard();
   if (infoUntil > millis()) drawInfo(millis());
 }
@@ -825,7 +955,7 @@ go('/api/status');setInterval(()=>go('/api/status'),2000);
 </script></body></html>)HTML";
 
 static String statusJson() {
-  static const char *ST[3] = {"waiting", "riding", "finished"};
+  static const char *ST[4] = {"waiting", "riding", "finished", "raking"};
   String j = "{\"fw\":\"" FW_VERSION "\",\"board\":\"" BOARD_NAME "\",\"host\":\"" + g_host + "\",\"ip\":\"" + WiFi.localIP().toString() + "\"";
   j += ",\"snd\":" + String(g_snd ? "true" : "false") + ",\"vol\":" + String(g_vol);
   j += ",\"inv\":" + String(g_invert ? "true" : "false") + ",\"swaprb\":" + String(g_swaprb ? "true" : "false");
@@ -1034,6 +1164,7 @@ void loop() {
   wasTouched = touched;
   if (press) {
     if (rnd.st == R_RIDE) tapJump();
+    else if (rnd.st == R_RAKE) {}               // wait for the tractor
     else { if (rnd.st == R_DONE) nextRider(); rnd.you = true; rnd.t = max(rnd.t, 2.0f); }   // your round starts in a moment
   }
 
