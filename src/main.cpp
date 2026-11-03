@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "0.1.12"
+#define FW_VERSION "0.1.15"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -222,7 +222,8 @@ static float liftNow() { return horse.air ? 4 * horse.jH * horse.u * (1 - horse.
 struct Tractor { int leg; float x, gy, th, wheel; int dir; };   // leg: 0 front, 1 the turn, 2 far side, 3 gone
 static Tractor tractor = {3, 0, 0, 0, 0, 1};
 static int roundsSinceRake = 0;
-static const char *SPONSORS[4] = {"Legends Grill", "Rogers Diner", "Silver Spoon", "Campagna"};   // the boards round the ring, too
+static const char *SPONSORS[4] = {"Legends Grill", "Rogers Diner", "Silver Spoon", "Campagna Italian Cuisine"};   // the boards round the ring, too
+static const char *SPONSOR_VISIT[4] = {"Visit", "Visit", "Visit the", "Visit"};
 static int sponsor = -1;          // whose board goes up over the stands this break (the next one each time)
 
 static void startRake() {
@@ -623,17 +624,34 @@ static void initFans() {
     }
 }
 
+// Applause: hands go up all over the stands. After a clear round the whole crowd is on its feet, jumping up and down:
+// the tiers are repainted over the cached crowd and everyone is drawn again a few pixels up or down.
 static void drawClapping() {
-  if (!(rnd.st == R_DONE && rnd.t < (rnd.faults == 0 ? 4.5f : 2.0f))) return;
+  const bool clear = !rnd.elim && rnd.faults == 0;
+  if (!(rnd.st == R_DONE && rnd.t < (clear ? 4.5f : 2.0f))) return;
   if (!cv.visible(STAND_ROW0 - 10, STAND_ROW0 + 5 * STAND_ROWH)) return;
-  for (int i = 0; i < nFans; i++) {
-    const uint32_t h = (i * 2654435761u) ^ (g_frameNo * 40503u);
-    if ((h >> 13) % 3) continue;
-    const Fan &f = fans[i];
-    const float up = ((h >> 7) & 1) ? 7 : 5;
-    cv.fillRect(f.x - 3, f.y - up, 2, 2, SKINS[f.skin]);
-    cv.fillRect(f.x + 1, f.y - up, 2, 2, SKINS[f.skin]);
+  if (clear) {
+    for (int k = 0; k * STAND_ROWH < 54; k++) {
+      const float y0 = 58 + k * STAND_ROWH, y1 = min(112.0f, y0 + STAND_ROWH);
+      cv.fillRect(0, y0, VW, y1 - y0, (k & 1) ? RGB(52, 92, 140) : RGB(60, 104, 156));
+    }
+    for (int x = 48; x < VW; x += 96) cv.fillRect(x - 1, 58, 3, 54, RGB(44, 48, 58));
   }
+  for (int i = 0; i < nFans; i++) {
+    const Fan &f = fans[i];
+    float y = f.y;
+    if (clear) {
+      y -= 3.5f * fabsf(sinf(curT * 7 + (i * 37 % 100) * 0.0628f));   // each fan on their own beat
+      cv.fillRoundRect(f.x - 3, y - 1, 6, 7, 2, SHIRTS[f.shirt]);
+      cv.fillCircle(f.x, y - 3.5f, 2.3f, SKINS[f.skin]);
+    }
+    const uint32_t h = (i * 2654435761u) ^ (g_frameNo * 40503u);
+    if (!clear && (h >> 13) % 3) continue;
+    const float up = ((h >> 7) & 1) ? 7 : 5;
+    cv.fillRect(f.x - 3, y - up, 2, 2, SKINS[f.skin]);
+    cv.fillRect(f.x + 1, y - up, 2, 2, SKINS[f.skin]);
+  }
+  if (clear) cv.fillRect(0, 112, VW, 1, RGB(240, 240, 230));
 }
 
 static const int FLAG_X[5] = {40, 140, 240, 340, 440};
@@ -693,16 +711,16 @@ static void drawScoreboard() {
     cv.setTextDatum(MC_DATUM); cv.setTextColor(RGB(255, 170, 70));
     cv.drawString(rnd.elim ? "2nd REFUSAL" : "REFUSAL  +4", 240, 71, 4);
   }
-  if (rnd.st == R_DONE && cv.visible(146, 214)) {
-    panel(120, 148, 240, 64);
+  if (rnd.st == R_DONE && cv.visible(54, 112)) {   // up over the stands, so the ring stays clear (he leaves after 2 refusals)
+    panel(120, 56, 240, 54);
     cv.setTextDatum(MC_DATUM);
-    if (rnd.elim) { cv.setTextColor(RGB(255, 90, 80)); cv.drawString("ELIMINATED", 240, 168, 4); }
-    else if (rnd.faults == 0) { cv.setTextColor(RGB(120, 240, 120)); cv.drawString("CLEAR ROUND!", 240, 168, 4); }
-    else { cv.setTextColor(RGB(255, 170, 70)); snprintf(b, sizeof(b), "%d FAULTS", rnd.faults); cv.drawString(b, 240, 168, 4); }
+    if (rnd.elim) { cv.setTextColor(RGB(255, 90, 80)); cv.drawString("ELIMINATED", 240, 73, 4); }
+    else if (rnd.faults == 0) { cv.setTextColor(RGB(120, 240, 120)); cv.drawString("CLEAR ROUND!", 240, 73, 4); }
+    else { cv.setTextColor(RGB(255, 170, 70)); snprintf(b, sizeof(b), "%d FAULTS", rnd.faults); cv.drawString(b, 240, 73, 4); }
     cv.setTextColor(RGB(255, 255, 255));
     if (rnd.elim) snprintf(b, sizeof(b), "Two refusals");
     else snprintf(b, sizeof(b), lastWasLeader ? "%.1f s   New leader!" : "Time %.1f s", rnd.time);
-    cv.drawString(b, 240, 196, 2);
+    cv.drawString(b, 240, 97, 2);
   }
 }
 
@@ -770,12 +788,12 @@ static void drawTractor() {
 // The sponsor's board over the stands while the tractor is out.
 static void drawSponsor() {
   if (rnd.st != R_RAKE || !cv.visible(54, 112)) return;
-  cv.fillRoundRect(96, 56, 288, 54, 8, RGB(206, 210, 216));
-  cv.drawRoundRect(96, 56, 288, 54, 8, RGB(255, 255, 255));
-  cv.drawRoundRect(98, 58, 284, 50, 7, RGB(130, 134, 142));
+  cv.fillRoundRect(56, 56, 368, 54, 8, RGB(206, 210, 216));      // wide enough for "Campagna Italian Cuisine"
+  cv.drawRoundRect(56, 56, 368, 54, 8, RGB(255, 255, 255));
+  cv.drawRoundRect(58, 58, 364, 50, 7, RGB(130, 134, 142));
   cv.setTextDatum(MC_DATUM);
   cv.setTextColor(RGB(60, 64, 72));
-  cv.drawString("Visit the", 240, 69, 2);
+  cv.drawString(SPONSOR_VISIT[max(sponsor, 0)], 240, 69, 2);
   cv.setTextColor(RGB(24, 28, 36));
   cv.drawString(SPONSORS[max(sponsor, 0)], 240, 92, 4);
 }
@@ -829,13 +847,13 @@ static void renderBackground(Canvas &c) {
   }
   c.fillRect(0, 112, VW, 1, RGB(240, 240, 230));
   // advertising boards round the arena
-  static const char *ADS[4] = {"LEGENDS GRILL", "ROGERS DINER", "SILVER SPOON", "CAMPAGNA"};
+  static const char *ADS[4] = {"LEGENDS GRILL", "ROGERS DINER", "SILVER SPOON", "CAMPAGNA ITALIAN CUISINE"};
+  static const int ADW[4] = {104, 98, 98, 154};        // each board fits its name (6 px a letter), 6 px apart
   uint16_t ADC[4] = {RGB(190, 36, 36), RGB(30, 74, 156), RGB(110, 114, 124), RGB(28, 120, 70)};
-  for (int i = 0; i < 4; i++) {
-    const float x = i * 120 + 5;
-    c.fillRect(x, 124, 110, 13, ADC[i]);
+  for (int i = 0, x = 4; i < 4; x += ADW[i] + 6, i++) {
+    c.fillRect(x, 124, ADW[i], 13, ADC[i]);
     c.setTextDatum(MC_DATUM); c.setTextColor(RGB(255, 255, 255));
-    c.drawString(ADS[i], x + 55, 131, 1);
+    c.drawString(ADS[i], x + ADW[i] / 2, 131, 1);
   }
   c.fillRect(0, 121, VW, 2, RGB(250, 250, 250));
   // flower boxes along the boards
