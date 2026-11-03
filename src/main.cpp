@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "1.1.6"
+#define FW_VERSION "1.3.5"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
