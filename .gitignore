@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 dist/
 .claude/settings.local.json
+
+# local documents, not part of the project
+*.pdf
