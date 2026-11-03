@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "0.1.8"
+#define FW_VERSION "0.1.9"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -76,8 +76,8 @@ static float scaleAt(float y) { return 0.50f + 0.18f * (y - 204) / 78.0f; }    /
 struct Coat { uint16_t body, shade, mane, lower; };
 struct Rider { const char *name, *horse; uint8_t coat; uint16_t jacket; float pace; };   // pace: canter speed, 1 = average
 static Coat COATS[4];
-static Rider RIDERS[8];
-#define NRIDERS 8
+static Rider RIDERS[10];
+#define NRIDERS 10
 
 static void initRiders() {
   COATS[0] = {RGB(142, 82, 42), RGB(100, 56, 28), RGB(28, 22, 18), RGB(34, 26, 20)};       // bay
@@ -92,6 +92,8 @@ static void initRiders() {
   RIDERS[5] = {"Oliver", "Duke", 0, RGB(110, 20, 60), 1.0f};
   RIDERS[6] = {"Ava", "Silver", 2, RGB(20, 20, 24), 0.92f};
   RIDERS[7] = {"Noah", "Midnight", 3, RGB(150, 24, 32), 1.04f};
+  RIDERS[8] = {"Lily", "Copper", 1, RGB(24, 80, 50), 1.01f};
+  RIDERS[9] = {"Ethan", "Blue Moon", 2, RGB(24, 40, 90), 0.95f};
 }
 
 // ---------------------------------------------------------------- the course
