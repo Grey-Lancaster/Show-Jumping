@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "0.1.9"
+#define FW_VERSION "0.1.12"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -222,9 +222,12 @@ static float liftNow() { return horse.air ? 4 * horse.jH * horse.u * (1 - horse.
 struct Tractor { int leg; float x, gy, th, wheel; int dir; };   // leg: 0 front, 1 the turn, 2 far side, 3 gone
 static Tractor tractor = {3, 0, 0, 0, 0, 1};
 static int roundsSinceRake = 0;
+static const char *SPONSORS[4] = {"Legends Grill", "Rogers Diner", "Silver Spoon", "Campagna"};   // the boards round the ring, too
+static int sponsor = -1;          // whose board goes up over the stands this break (the next one each time)
 
 static void startRake() {
   rnd.st = R_RAKE; rnd.t = 0;
+  sponsor = (sponsor + 1) % 4;
   tractor = {0, -70, RAKE_NEAR, 0, 0, 1};
   audioEngine(true);
 }
@@ -774,7 +777,7 @@ static void drawSponsor() {
   cv.setTextColor(RGB(60, 64, 72));
   cv.drawString("Visit the", 240, 69, 2);
   cv.setTextColor(RGB(24, 28, 36));
-  cv.drawString("Silver Spoon", 240, 92, 4);
+  cv.drawString(SPONSORS[max(sponsor, 0)], 240, 92, 4);
 }
 
 static void drawScene(float t) {
@@ -826,21 +829,21 @@ static void renderBackground(Canvas &c) {
   }
   c.fillRect(0, 112, VW, 1, RGB(240, 240, 230));
   // advertising boards round the arena
-  static const char *ADS[6] = {"GRAND PRIX", "SHOW JUMPING", "CLEAR ROUND", "CYD 4.0", "HORSE SHOW", "SADDLE CLUB"};
-  uint16_t ADC[4] = {RGB(190, 36, 36), RGB(30, 74, 156), RGB(28, 120, 70), RGB(220, 160, 30)};
-  for (int i = 0; i < 6; i++) {
-    const float x = i * 80 + 4;
-    c.fillRect(x, 124, 72, 13, ADC[i & 3]);
+  static const char *ADS[4] = {"LEGENDS GRILL", "ROGERS DINER", "SILVER SPOON", "CAMPAGNA"};
+  uint16_t ADC[4] = {RGB(190, 36, 36), RGB(30, 74, 156), RGB(110, 114, 124), RGB(28, 120, 70)};
+  for (int i = 0; i < 4; i++) {
+    const float x = i * 120 + 5;
+    c.fillRect(x, 124, 110, 13, ADC[i]);
     c.setTextDatum(MC_DATUM); c.setTextColor(RGB(255, 255, 255));
-    c.drawString(ADS[i], x + 36, 131, 1);
+    c.drawString(ADS[i], x + 55, 131, 1);
   }
   c.fillRect(0, 121, VW, 2, RGB(250, 250, 250));
   // flower boxes along the boards
   static const uint16_t FL[3] = {RGB(230, 60, 80), RGB(250, 210, 60), RGB(250, 140, 200)};
   for (int x = 20; x < VW; x += 80) {
-    c.fillRoundRect(x, 140, 40, 7, 2, RGB(120, 80, 50));
-    c.fillEllipse(x + 20, 139, 22, 6, RGB(50, 120, 50));
-    for (int k = 0; k < 9; k++) c.fillCircle(x + 2 + rnd2(36), 135 + rnd2(6), 1.4f, FL[rnd2(3)]);
+    c.fillRoundRect(x, 143, 40, 7, 2, RGB(120, 80, 50));
+    c.fillEllipse(x + 20, 143, 22, 5, RGB(50, 120, 50));
+    for (int k = 0; k < 9; k++) c.fillCircle(x + 2 + rnd2(36), 140 + rnd2(5), 1.4f, FL[rnd2(3)]);
   }
   // sand texture and the hoof-worn track along both lines
   const uint16_t lightSand = RGB(236, 214, 170), darkSand = RGB(186, 152, 104);
@@ -928,7 +931,7 @@ label{display:block;margin:8px 0}input[type=text]{background:#10241a;color:#eaf2
 button{background:#d8b44a;color:#10241a;border:0;border-radius:6px;padding:8px 12px;margin:4px 4px 4px 0;font-weight:600;cursor:pointer}
 button.g{background:#3c6a4c;color:#eaf2e6}table{width:100%;border-collapse:collapse}td{padding:3px 4px;border-bottom:1px solid #2a4a36}a{color:#d8b44a}</style></head><body>
 <h1>Show Jumping</h1><small id="ver"></small>
-<div class="c"><b id="now">-</b><br><small id="rd"></small><br><button onclick="go('/api/next')">Next rider now</button></div>
+<div class="c"><b id="now">-</b><br><small id="rd"></small><br><button onclick="go('/api/next')">Next rider now</button><button class="g" onclick="go('/api/rake')">Rake the ring</button></div>
 <div class="c"><b>Leaderboard</b> <small>(since the last restart)</small><table id="lb"></table></div>
 <div class="c"><b>Sound</b><label><input type="checkbox" id="snd" onchange="go('/api/snd?on='+(this.checked?1:0))"> Sound on</label>
 <label>Volume <input type="range" id="vol" min="0" max="100" onchange="go('/api/snd?vol='+this.value)"></label></div>
@@ -1002,6 +1005,11 @@ static void setupWeb() {
     if (server.hasArg("on")) { g_snd = server.arg("on").toInt() != 0; prefs.putBool("snd", g_snd); }
     if (server.hasArg("vol")) { g_vol = constrain(server.arg("vol").toInt(), 0, 100); prefs.putInt("vol", g_vol); }
     halApplySound();
+    server.send(200, "application/json", statusJson());
+  });
+  server.on("/api/rake", HTTP_ANY, []() {         // send the tractor out now (it waits for the current round to finish)
+    if (rnd.st != R_RAKE) roundsSinceRake = TRACTOR_EVERY;
+    if (rnd.st == R_WAIT) startRake();
     server.send(200, "application/json", statusJson());
   });
   server.on("/api/next", HTTP_ANY, []() { nextRider(); rnd.t = 3; server.send(200, "application/json", statusJson()); });
