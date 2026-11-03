@@ -13,7 +13,7 @@ Prefer to download files? The [latest release](../../releases/latest) has a fact
 ## What it does
 - **The course:** a horse and rider canter round **five fences** in front of a packed grandstand: the near line left to right (a vertical and an oxer), a U-turn at the right end of the ring, then the far line right to left (a wall, a vertical with a **water tray** under it, and an oxer).
 - **Ten riders and horses** take turns (bay, chestnut, grey and black coats), each horse with its own pace, so round times differ.
-- **Scoring:** every round is timed. A knocked rail falls to the sand and costs **4 faults**. At the finish a banner over the stands shows *Clear round!* or the faults, and the leader is shown top-right (the web page keeps a top-5 leaderboard).
+- **Scoring:** every round is timed. A knocked rail falls to the sand and costs **4 faults**. At the finish a banner over the stands shows *Clear round!* or the faults, and the leader is shown top-right (the web page keeps a top-10 leaderboard).
 - **Refusals:** now and then a horse props to a stop in front of a fence, the rider turns him away, loops back round and tries again (4 faults; the *Refusal +4* box comes up 1.5 s after he stops). About 1 auto round in 10 has one refusal, and 1 in 20 refuses twice at the same fence and is **eliminated** (`REFUSE_ONE`, `REFUSE_TWO` in `src/main.cpp`).
 - **The crowd** claps at the end of every round, and after a clear round the whole stand **jumps up and down**.
 - **Tap the screen to ride yourself.** A tap between rounds makes the next round yours; during a round every tap makes the horse take off right there, so time it before each fence (too early or too late and the rail comes down). Miss a take-off and he refuses; a second refusal is elimination.

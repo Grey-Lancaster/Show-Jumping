@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "1.1.5"
+#define FW_VERSION "1.1.6"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -149,7 +149,8 @@ struct Round { RoundSt st; float t; int rider; bool you; float time; bool timing
 static Round rnd = {R_WAIT, 0, 0, false, 0, false, false, 0, 0, -1, 0, 0, false, 0, 0, false};
 
 struct Result { char name[24]; int faults; float time; };
-static Result board[5];
+#define BOARD_TOP 10             // the leaderboard keeps the best 10 rounds
+static Result board[BOARD_TOP];
 static int nBoard = 0;
 static bool lastWasLeader = false;
 
@@ -163,10 +164,10 @@ static void record() {
   for (int i = 0; i < nBoard; i++)
     if (r.faults < board[i].faults || (r.faults == board[i].faults && r.time < board[i].time)) { at = i; break; }
   lastWasLeader = at == 0;
-  if (at >= 5) return;
-  for (int i = min(nBoard, 4); i > at; i--) board[i] = board[i - 1];
+  if (at >= BOARD_TOP) return;
+  for (int i = min(nBoard, BOARD_TOP - 1); i > at; i--) board[i] = board[i - 1];
   board[at] = r;
-  if (nBoard < 5) nBoard++;
+  if (nBoard < BOARD_TOP) nBoard++;
 }
 
 static float autoErr() { return (float)(random(-20, 21) + random(-20, 21) + random(-20, 21)); }   // roughly normal, sd ~20
@@ -950,7 +951,7 @@ button{background:#d8b44a;color:#10241a;border:0;border-radius:6px;padding:8px 1
 button.g{background:#3c6a4c;color:#eaf2e6}table{width:100%;border-collapse:collapse}td{padding:3px 4px;border-bottom:1px solid #2a4a36}a{color:#d8b44a}</style></head><body>
 <h1>Show Jumping</h1><small id="ver"></small>
 <div class="c"><b id="now">-</b><br><small id="rd"></small><br><button onclick="go('/api/next')">Next rider now</button><button class="g" onclick="go('/api/rake')">Rake the ring</button></div>
-<div class="c"><b>Leaderboard</b> <small>(since the last restart)</small><table id="lb"></table></div>
+<div class="c"><b>Leaderboard</b> <small>(top 10 since the last restart)</small><table id="lb"></table></div>
 <div class="c"><b>Sound</b><label><input type="checkbox" id="snd" onchange="go('/api/snd?on='+(this.checked?1:0))"> Sound on</label>
 <label>Volume <input type="range" id="vol" min="0" max="100" onchange="go('/api/snd?vol='+this.value)"></label></div>
 <div class="c"><b>Screen</b><br><button class="g" onclick="go('/api/rot')">Flip screen</button>
