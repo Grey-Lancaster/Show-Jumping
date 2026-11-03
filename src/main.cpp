@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "1.6.13"
+#define FW_VERSION "1.6.14"
 
 TFT_eSPI tft = TFT_eSPI();
 #ifdef BOARD_FREENOVE_S3
@@ -1167,6 +1167,11 @@ static String statusJson() {
   j += ",\"snd\":" + String(g_snd ? "true" : "false") + ",\"vol\":" + String(g_vol);
   j += ",\"inv\":" + String(g_invert ? "true" : "false") + ",\"swaprb\":" + String(g_swaprb ? "true" : "false");
   j += ",\"rider\":\"" + String(riderName()) + "\",\"horse\":\"" + RIDERS[rnd.rider].horse + "\",\"state\":\"" + ST[rnd.st] + "\"";
+  // health, for watching it run: seconds up, why it last started, free / lowest-ever free heap
+  static const char *RST[] = {"unknown", "power-on", "external", "software", "panic", "int-watchdog", "task-watchdog", "watchdog", "deep-sleep", "brownout", "sdio"};
+  const int rr = (int)esp_reset_reason();
+  j += ",\"up\":" + String(millis() / 1000) + ",\"rst\":\"" + (rr >= 0 && rr <= 10 ? RST[rr] : "other") + "\"";
+  j += ",\"heap\":" + String(ESP.getFreeHeap()) + ",\"minheap\":" + String(ESP.getMinFreeHeap());
   j += ",\"time\":" + String(rnd.time, 1) + ",\"faults\":" + String(rnd.faults) + ",\"fps\":" + String(g_fps, 1) + ",\"lb\":[";
   for (int i = 0; i < nBoard; i++) {
     if (i) j += ",";
