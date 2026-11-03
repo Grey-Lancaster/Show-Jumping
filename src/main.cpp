@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "1.6.15"
+#define FW_VERSION "1.6.16"
 
 TFT_eSPI tft = TFT_eSPI();
 #ifdef BOARD_FREENOVE_S3
@@ -253,8 +253,9 @@ static void jumpFence(const Fence &f) { startJump(jumpLen(f), fenceTop(f) + 4); 
 
 // A tap: take off now. The jump is sized for the next fence if it is close ahead, else a little hop.
 static void tapJump() {
-  if (horse.air || horse.turning || (horse.ref != RF_NONE && horse.ref != RF_BACK) || horse.x < -10 || horse.x > VW + 10) return;
-  rnd.you = true;
+  // Only in your own round (taken with a tap before it starts): a stray tap during an auto round used to take it
+  // over, and then every fence he wasn't tapped for became a refusal.
+  if (!rnd.you || horse.air || horse.turning || (horse.ref != RF_NONE && horse.ref != RF_BACK) || horse.x < -10 || horse.x > VW + 10) return;
   const float s = scaleAt(horse.gy);
   if (rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
     const float ahead = (fences[rnd.nf].x - horse.x) * horse.dir;
