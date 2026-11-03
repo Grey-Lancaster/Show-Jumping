@@ -2,6 +2,8 @@
 
 An animated show jumping arena for the **CYD 4.0"** (Freenove ESP32 Display 4.0", ESP32-32E, ST7796 480x320, resistive touch). Built the same way as Deer Hunt and the Fish Tank: one 480x320 virtual world, drawn procedurally in 32-row strips over a scenery cache kept in flash (the board has no PSRAM).
 
+![Over fence 1](docs/img/jump.png)
+
 ## Easiest way: the web installer
 
 ### [➡ Open the Web Installer](https://grey-lancaster.github.io/Show-Jumping/)
@@ -9,6 +11,18 @@ An animated show jumping arena for the **CYD 4.0"** (Freenove ESP32 Display 4.0"
 Use **Chrome or Edge on a computer**, plug the board in by USB, click **Connect**, then **Flash**. The first start asks you to calibrate the touch screen (five crosshairs) and then to pick your WiFi on the screen.
 
 Prefer to download files? The [latest release](../../releases/latest) has a factory file (a new board) and an update file (a board that is already running; keeps WiFi and settings).
+
+## Screenshots
+Straight from the board (`/api/frame`, the web page's *Screenshot* button).
+
+| | |
+|---|---|
+| ![Over the water at fence 4](docs/img/water.png) | ![Clear round: the crowd on its feet](docs/img/clear-round.png) |
+| Over the water at fence 4 | Clear round: the crowd jumps up and down |
+| ![The tractor raking the ring](docs/img/tractor.png) | ![A fall: over the horse's head](docs/img/fall-thrown.png) |
+| Every 5 rounds the tractor rakes the ring, with a sponsor board over the stands | A fall: the horse digs in and the rider goes over his head |
+| ![Rider fall](docs/img/fall-down.png) | ![Leading the horse out](docs/img/fall-lead-out.png) |
+| Down at the foot of the fence, the rail with him | Leading the horse out along the edge of the ring |
 
 ## What it does
 - **The course:** a horse and rider canter round **five fences** in front of a packed grandstand: the near line left to right (a vertical and an oxer), a U-turn at the right end of the ring, then the far line right to left (a wall, a vertical with a **water tray** under it, and an oxer).
