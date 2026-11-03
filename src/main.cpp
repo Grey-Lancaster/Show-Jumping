@@ -21,10 +21,15 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "1.5.2"
+#define FW_VERSION "1.6.9"
 
 TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
+#ifdef BOARD_FREENOVE_S3
+TFT_eSprite frame = TFT_eSprite(&tft);    // Freenove (PSRAM): the whole frame
+TFT_eSprite bg = TFT_eSprite(&tft);       // and the static background, drawn once
+#else
+TFT_eSprite strip = TFT_eSprite(&tft);    // CYD: one horizontal strip of the panel
+#endif
 Canvas cv;
 Preferences prefs;
 WebServer server(80);
@@ -521,7 +526,7 @@ static void drawFence(const Fence &f, bool front) {
         cv.fillRect(px - dx - 5 * s, ly + dy - hs - 11 * s, 10 * s, 9 * s, W);
         char n[3]; snprintf(n, sizeof(n), "%d", (int)(&f - fences) + 1);
         cv.setTextDatum(MC_DATUM); cv.setTextColor(RGB(20, 20, 20));
-        cv.drawString(n, px - dx, ly + dy - hs - 6.5f * s, 1);
+        cv.drawString(n, px - dx, ly + dy - hs - 6.5f * s, FONT_TINY);
       }
       continue;
     }
@@ -786,44 +791,47 @@ static void drawScoreboard() {
     cv.setTextColor(RGB(255, 255, 255));
     if (rnd.st == R_RAKE) snprintf(b, sizeof(b), "Arena break");
     else snprintf(b, sizeof(b), "%s on %s", riderName(), RIDERS[rnd.rider].horse);
-    cv.drawString(b, 12, 8, 2);
+    cv.drawString(b, 12, 8, FONT_TEXT);
     cv.setTextColor(RGB(250, 214, 80));
     if (rnd.st == R_RAKE) snprintf(b, sizeof(b), "Raking the ring");
     else snprintf(b, sizeof(b), "Time %.1f   Faults %d", rnd.time, rnd.faults);
-    cv.drawString(b, 12, 27, 2);
+    cv.drawString(b, 12, 27, FONT_TEXT);
     panel(VW - 200, 3, 196, 26);
     cv.setTextColor(RGB(234, 234, 220));
-    if (nBoard) snprintf(b, sizeof(b), "Leader %s  %d/%.1f", board[0].name, board[0].faults, board[0].time);
+    if (nBoard) {                                   // just the rider: rider and horse can be 15 letters each
+      const char *slash = strchr(board[0].name, '/');
+      snprintf(b, sizeof(b), "Leader %.*s  %d/%.1f", slash ? (int)(slash - board[0].name) : NAME_LEN, board[0].name, board[0].faults, board[0].time);
+    }
     else snprintf(b, sizeof(b), "Leader: no rounds yet");
-    cv.drawString(b, VW - 192, 8, 2);
+    cv.drawString(b, VW - 192, 8, FONT_TEXT);
   }
   if (rnd.st == R_RIDE && rnd.you && cv.visible(30, 52)) {
     cv.setTextDatum(TL_DATUM); cv.setTextColor(RGB(255, 255, 255));
-    cv.drawString("Tap = jump!", VW - 110, 34, 2);
+    cv.drawString("Tap = jump!", VW - 110, 34, FONT_TEXT);
   }
   if (rnd.st == R_WAIT && cv.visible(150, 200)) {
     panel(80, 152, 320, 44);
     cv.setTextDatum(MC_DATUM); cv.setTextColor(RGB(255, 255, 255));
     snprintf(b, sizeof(b), "Next: %s on %s", riderName(), RIDERS[rnd.rider].horse);
-    cv.drawString(b, 240, 166, 2);
+    cv.drawString(b, 240, 166, FONT_TEXT);
     cv.setTextColor(RGB(250, 214, 80));
-    cv.drawString(rnd.you ? "Your round! Tap to jump each fence" : "Tap the screen to ride this round yourself", 240, 184, 2);
+    cv.drawString(rnd.you ? "Your round! Tap to jump each fence" : "Tap to ride this round yourself", 240, 184, FONT_TEXT);
   }
   if (rnd.st == R_RIDE && millis() >= rnd.msgFrom && rnd.msgUntil > millis() && cv.visible(52, 90)) {           // up over the crowd, clear of both lines
     panel(160, 54, 160, 34);
     cv.setTextDatum(MC_DATUM); cv.setTextColor(RGB(255, 170, 70));
-    cv.drawString(rnd.fell ? "RIDER FALL" : rnd.elim ? "2nd REFUSAL" : "REFUSAL  +4", 240, 71, 4);
+    cv.drawString(rnd.fell ? "RIDER FALL" : rnd.elim ? "2nd REFUSAL" : "REFUSAL  +4", 240, 71, FONT_HEAD);
   }
   if (rnd.st == R_DONE && cv.visible(54, 112)) {   // up over the stands, so the ring stays clear (he leaves after 2 refusals)
     panel(120, 56, 240, 54);
     cv.setTextDatum(MC_DATUM);
-    if (rnd.elim) { cv.setTextColor(RGB(255, 90, 80)); cv.drawString("ELIMINATED", 240, 73, 4); }
-    else if (rnd.faults == 0) { cv.setTextColor(RGB(120, 240, 120)); cv.drawString("CLEAR ROUND!", 240, 73, 4); }
-    else { cv.setTextColor(RGB(255, 170, 70)); snprintf(b, sizeof(b), "%d FAULTS", rnd.faults); cv.drawString(b, 240, 73, 4); }
+    if (rnd.elim) { cv.setTextColor(RGB(255, 90, 80)); cv.drawString("ELIMINATED", 240, 73, FONT_HEAD); }
+    else if (rnd.faults == 0) { cv.setTextColor(RGB(120, 240, 120)); cv.drawString("CLEAR ROUND!", 240, 73, FONT_HEAD); }
+    else { cv.setTextColor(RGB(255, 170, 70)); snprintf(b, sizeof(b), "%d FAULTS", rnd.faults); cv.drawString(b, 240, 73, FONT_HEAD); }
     cv.setTextColor(RGB(255, 255, 255));
     if (rnd.elim) snprintf(b, sizeof(b), rnd.fell ? "Rider fall" : "Two refusals");
     else snprintf(b, sizeof(b), lastWasLeader ? "%.1f s   New leader!" : "Time %.1f s", rnd.time);
-    cv.drawString(b, 240, 97, 2);
+    cv.drawString(b, 240, 97, FONT_TEXT);
   }
 }
 
@@ -935,9 +943,9 @@ static void drawSponsor() {
   cv.drawRoundRect(58, 58, 364, 50, 7, RGB(130, 134, 142));
   cv.setTextDatum(MC_DATUM);
   cv.setTextColor(RGB(60, 64, 72));
-  cv.drawString(SPONSOR_VISIT[max(sponsor, 0)], 240, 69, 2);
+  cv.drawString(SPONSOR_VISIT[max(sponsor, 0)], 240, 69, FONT_TEXT);
   cv.setTextColor(RGB(24, 28, 36));
-  cv.drawString(SPONSORS[max(sponsor, 0)], 240, 92, 4);
+  cv.drawString(SPONSORS[max(sponsor, 0)], 240, 92, FONT_HEAD);
 }
 
 static void drawScene(float t) {
@@ -992,13 +1000,23 @@ static void renderBackground(Canvas &c) {
   }
   c.fillRect(0, 112, VW, 1, RGB(240, 240, 230));
   // advertising boards round the arena
-  static const char *ADS[4] = {"LEGENDS GRILL", "ROGERS DINER", "SILVER SPOON", "CAMPAGNA ITALIAN CUISINE"};
-  static const int ADW[4] = {104, 98, 98, 154};        // each board fits its name (6 px a letter), 6 px apart
+  // Each board is as wide as its name in the panel's own pixels, spread evenly; on the 320-wide boards the full
+  // Campagna name does not fit beside the others, so it says just CAMPAGNA there.
+  const char *ADS[4] = {"LEGENDS GRILL", "ROGERS DINER", "SILVER SPOON", "CAMPAGNA ITALIAN CUISINE"};
   uint16_t ADC[4] = {RGB(190, 36, 36), RGB(30, 74, 156), RGB(110, 114, 124), RGB(28, 120, 70)};
-  for (int i = 0, x = 4; i < 4; x += ADW[i] + 6, i++) {
-    c.fillRect(x, 124, ADW[i], 13, ADC[i]);
+  float adw[4], total = 0;
+  for (int pass = 0; pass < 2; pass++) {
+    total = 0;
+    for (int i = 0; i < 4; i++) { adw[i] = (s->textWidth(ADS[i], FONT_TINY) + 10) / c.sx; total += adw[i]; }
+    if (total <= VW - 12) break;
+    ADS[3] = "CAMPAGNA";
+  }
+  const float gap = (VW - total) / 5;
+  float ax = gap;
+  for (int i = 0; i < 4; ax += adw[i] + gap, i++) {
+    c.fillRect(ax, 124, adw[i], 13, ADC[i]);
     c.setTextDatum(MC_DATUM); c.setTextColor(RGB(255, 255, 255));
-    c.drawString(ADS[i], x + ADW[i] / 2, 131, 1);
+    c.drawString(ADS[i], ax + adw[i] / 2, 131, FONT_TINY);
   }
   c.fillRect(0, 121, VW, 2, RGB(250, 250, 250));
   // flower boxes along the boards
@@ -1032,12 +1050,13 @@ static void renderBackground(Canvas &c) {
     c.fillTriangle(nx, ny - 26 * s, nx + 10 * s, ny - 22 * s, nx, ny - 18 * s, nearC);
     c.fillTriangle(fx, fy - 26 * s, fx + 10 * s, fy - 22 * s, fx, fy - 18 * s, farC);
     c.setTextDatum(MC_DATUM); c.setTextColor(RGB(120, 90, 60));
-    c.drawString(k == 0 ? "START" : "FINISH", x, ly + dy + 9 * s, 1);
+    c.drawString(k == 0 ? "START" : "FINISH", x, ly + dy + 9 * s, FONT_TINY);
   }
 }
 
 // The CYD has no PSRAM and too little heap for a 300 KB background, so the scenery is drawn once into a flash
 // partition ("bgcache", memory-mapped) and each strip starts as a copy of it. Same scheme as Deer Hunt.
+#ifndef BOARD_FREENOVE_S3
 static const uint8_t *bgCache = nullptr;
 static void bgCacheInit() {
   const esp_partition_t *p = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t)0x40, "bgcache");
@@ -1085,6 +1104,7 @@ static void latchTouch() {
   int x, y;
   if (!g_latch && halTouch(x, y)) { g_latch = true; g_latchX = x; g_latchY = y; }
 }
+#endif
 
 // ---------------------------------------------------------------- WiFi, web page, OTA
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1152,10 +1172,15 @@ static void setupWeb() {
     server.sendHeader("X-W", String(PANEL_W));
     server.sendHeader("X-H", String(PANEL_H));
     server.send(200, "application/octet-stream", "");
+#ifdef BOARD_FREENOVE_S3
+    const uint8_t *fp = (const uint8_t *)frame.getPointer();
+    for (size_t off = 0; off < (size_t)PANEL_W * PANEL_H * 2; off += 4096) server.sendContent((const char *)fp + off, min((size_t)4096, (size_t)PANEL_W * PANEL_H * 2 - off));
+#else
     for (int i = 0; i < PANEL_H / STRIP_H; i++) {
       renderStrip(i);
       server.sendContent((const char *)strip.getPointer(), PANEL_W * STRIP_H * 2);
     }
+#endif
   });
   server.on("/api/status", HTTP_GET, []() { server.sendHeader("Access-Control-Allow-Origin", "*"); server.send(200, "application/json", statusJson()); });
   server.on("/api/set", HTTP_ANY, []() {
@@ -1300,17 +1325,28 @@ void setup() {
 
   cv.sx = PANEL_W / (float)VW;
   cv.sy = PANEL_H / (float)VH;
+  g_sandDark = RGB(170, 138, 94);
+  initRiders();
+  initCourse();
+  initFans();
+#ifdef BOARD_FREENOVE_S3
+  frame.setColorDepth(16);
+  bg.setColorDepth(16);
+  if (!frame.createSprite(PANEL_W, PANEL_H) || !bg.createSprite(PANEL_W, PANEL_H)) {
+    tft.setTextColor(TFT_RED);
+    tft.drawString("Sprite alloc failed (PSRAM?)", 10, 10, 4);
+    while (true) delay(1000);
+  }
+  { Canvas bgc; bgc.s = &bg; bgc.sx = cv.sx; bgc.sy = cv.sy; renderBackground(bgc); }
+#else
   strip.setColorDepth(16);
   if (!strip.createSprite(PANEL_W, STRIP_H)) {
     tft.setTextColor(TFT_RED);
     tft.drawString("Out of memory", 10, 10, 4);
     while (true) delay(1000);
   }
-  g_sandDark = RGB(170, 138, 94);
-  initRiders();
-  initCourse();
-  initFans();
   bgCacheInit();
+#endif
   randomSeed(esp_random());
   rnd.rider = random(NRIDERS);
   resetCourse();
@@ -1341,8 +1377,10 @@ void loop() {
 
   int px, py;
   bool touched = halTouch(px, py);
+#ifndef BOARD_FREENOVE_S3
   if (!touched && g_latch) { touched = true; px = g_latchX; py = g_latchY; }
   g_latch = false;
+#endif
   static bool wasTouched = false;
   const bool press = touched && !wasTouched;
   wasTouched = touched;
@@ -1356,11 +1394,18 @@ void loop() {
   curT = now / 1000.0f;
   g_frameNo++;
 
+#ifdef BOARD_FREENOVE_S3
+  cv.s = &frame; cv.oy = 0;
+  memcpy(frame.getPointer(), bg.getPointer(), (size_t)PANEL_W * PANEL_H * 2);
+  drawScene(curT);
+  frame.pushSprite(0, 0);
+#else
   for (int i = 0; i < PANEL_H / STRIP_H; i++) {
     renderStrip(i);
     strip.pushSprite(0, i * STRIP_H);
     latchTouch();                                // a whole frame takes a while: a short tap would fall between two polls
   }
+#endif
 
   frames++;
   if (now - fpsT >= 5000) {

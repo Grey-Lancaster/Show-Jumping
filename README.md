@@ -1,6 +1,6 @@
 # Show Jumping
 
-An animated show jumping arena for the **CYD 4.0"** (Freenove ESP32 Display 4.0", ESP32-32E, ST7796 480x320, resistive touch). Built the same way as Deer Hunt and the Fish Tank: one 480x320 virtual world, drawn procedurally in 32-row strips over a scenery cache kept in flash (the board has no PSRAM).
+An animated show jumping arena for the same five boards as Deer Hunt: the **CYD 4.0"** (Freenove ESP32 Display 4.0"), the **Freenove 4.0"** and **2.8"** (ESP32-S3) and the **CYD 2.8"** (one or two USB ports). Built the same way as Deer Hunt and the Fish Tank: one 480x320 virtual world scaled to the panel, drawn procedurally into a full frame in PSRAM (Freenove) or in horizontal strips over a scenery cache kept in flash (the CYDs have no PSRAM).
 
 ![Over fence 1](docs/img/jump.png)
 
@@ -8,7 +8,7 @@ An animated show jumping arena for the **CYD 4.0"** (Freenove ESP32 Display 4.0"
 
 ### [➡ Open the Web Installer](https://grey-lancaster.github.io/Show-Jumping/)
 
-Use **Chrome or Edge on a computer**, plug the board in by USB, click **Connect**, then **Flash**. The first start asks you to calibrate the touch screen (five crosshairs) and then to pick your WiFi on the screen.
+Use **Chrome or Edge on a computer**, plug the board in by USB, pick your board in the list, click **Connect**, then **Flash**. (Freenove boards: hold BOOT, tap RESET, release BOOT first, and press RESET after flashing.) On a CYD the first start asks you to calibrate the touch screen (five crosshairs); then every board asks you to pick your WiFi on the screen.
 
 Prefer to download files? The [latest release](../../releases/latest) has a factory file (a new board) and an update file (a board that is already running; keeps WiFi and settings).
 
@@ -36,18 +36,22 @@ Straight from the board (`/api/frame`, the web page's *Screenshot* button).
 - **Sponsors:** boards round the ring for Legends Grill, Rogers Diner, Silver Spoon and Campagna Italian Cuisine. While the tractor is out a sponsor board goes up over the stands, taking turns: *Visit Legends Grill*, *Visit Rogers Diner*, *Visit the Silver Spoon*, *Visit Campagna Italian Cuisine*.
 - **Sounds,** all synthesised: canter hoofbeats, the start bell, knocked poles, applause, the tractor putt-putting.
 - **Names:** the web page has a *Riders and horses* list where all ten rider and horse names can be changed (kept after a restart).
-- **WiFi is set up on the screen** with [TouchWifiProvisioner](https://github.com/Grey-Lancaster/TouchWifiProvisioner) (BOOT skips it). Web page at `http://showjump40.local`: leaderboard, next rider, sound and volume, flip screen, swap red/blue, invert colours, screenshot, recalibrate touch, hostname, forget WiFi, restart.
+- **WiFi is set up on the screen** with [TouchWifiProvisioner](https://github.com/Grey-Lancaster/TouchWifiProvisioner) (BOOT skips it). Web page at `http://showjump40.local` (Freenove 4.0": `showjump.local`, Freenove 2.8": `showjump28.local`, CYD 2.8": `cydshowjump.local`): leaderboard, next rider, sound and volume, flip screen, swap red/blue, invert colours, screenshot, recalibrate touch, hostname, forget WiFi, restart.
 - **Firmware update page** at `/update` ([ElegantOTA](https://github.com/ayushsharma82/ElegantOTA)) and ArduinoOTA. BOOT shows the connection info.
 
 ## Builds
 | Env | Board |
 |---|---|
-| `cyd40` (default) | Freenove ESP32 Display 4.0" (ESP32-32E, "FNK0103S" docs), ST7796 480x320, resistive touch, no PSRAM |
+| `cyd40` (default) | CYD 4.0" / Freenove ESP32 Display 4.0" (ESP32-32E, "FNK0103S" docs), ST7796 480x320, resistive touch, no PSRAM |
+| `freenove4` | Freenove FNK0104S 4.0", ST7796 480x320, ESP32-S3 N16R8 |
+| `freenove28` | Freenove FNK0104B/AB 2.8", ILI9341 320x240, ESP32-S3 |
+| `cyd28` | CYD 2.8", ILI9341, one USB port |
+| `cyd28usb2` | CYD 2.8", ST7789, two USB ports |
 
-`pio run -e cyd40`. Pushing a tag like `v0.1.0` makes CI build it, publish a release with a factory and an update file, and refresh the web installer in `docs/` (GitHub Pages serves `docs/` from `main`).
+`pio run -e <env>`. Only the CYD 4.0" has been run on a real board so far; the other four builds come from Deer Hunt's board settings. Wrong colours on a CYD almost always means the wrong env (driver); there are also swap red/blue and invert switches on the web page. Pushing a tag like `v1.5.2` makes CI build all five, publish a release with a factory and an update file for each, and refresh the web installer in `docs/` (GitHub Pages serves `docs/` from `main`).
 
 ## Layout
 - `src/main.cpp` - arena, course, horse and rider, rounds, scoreboard, web page.
 - `src/audio.cpp` - the synthesised sounds.
-- `src/hal_cyd28.cpp`, `src/wifi_setup.cpp`, `src/canvas.h` - the board layer from Deer Hunt.
+- `src/board.h`, `src/hal_cyd28.cpp` (CYDs), `src/hal_freenove.cpp` + `src/es8311.*` + `lib_freenove/` (Freenove), `src/wifi_setup.cpp`, `src/canvas.h` - the board layer from Deer Hunt.
 - `docs/` - the web installer. `.github/` - CI, release notes and the installer refresh.

@@ -19,6 +19,10 @@ jobs:
         # chip and where the bootloader goes in the merged image (S3: 0x0, classic ESP32: 0x1000)
         include:
           - {env: cyd40,      chip: esp32,   boot: "0x1000"}
+          - {env: freenove4,  chip: esp32s3, boot: "0x0"}
+          - {env: freenove28, chip: esp32s3, boot: "0x0"}
+          - {env: cyd28,      chip: esp32,   boot: "0x1000"}
+          - {env: cyd28usb2,  chip: esp32,   boot: "0x1000"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,7 +42,7 @@ jobs:
           B=.pio/build/${{ matrix.env }}
           mkdir -p dist
           BOOT=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -1)
-          # factory = the complete image, flashed at offset 0 (DIO, like the other CYD projects)
+          # factory = the complete image, flashed at offset 0 (DIO: the N16R8's octal PSRAM needs it)
           esptool.py --chip ${{ matrix.chip }} merge_bin \
             -o dist/Show-Jumping-${{ matrix.env }}-factory.bin \
             --flash_mode dio --flash_freq keep --flash_size keep \
@@ -105,6 +109,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs
           if git diff --cached --quiet; then echo "installer already up to date"; exit 0; fi
-          git commit -m "$GITHUB_REF_NAME: installer and files for the CYD 4.0"
+          git commit -m "$GITHUB_REF_NAME: installer and files for five boards"
           git pull --rebase origin main
           git push origin HEAD:main
