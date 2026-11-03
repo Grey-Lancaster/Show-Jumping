@@ -166,7 +166,7 @@ struct Horse {
 };
 enum Refusal { RF_NONE, RF_BRAKE, RF_HOLD, RF_AWAY, RF_BACK,
                RF_FSTOP, RF_THROW, RF_DOWN, RF_UP, RF_TOHORSE, RF_LEAD };   // the second row: a fall
-#define FALL_EVERY 1        // rounds between falls (every round for now, to watch it; 9 later)
+#define FALL_EVERY 9        // rounds between falls
 #define FALL_STOP 42        // where the horse digs in: his middle this far short of the fence (local units)
 struct Thrown { float x, y, a, x0, y0, x1, y1, walk, lead0; int d; };   // the rider on foot: hip, forward tilt, flight, facing
 static Thrown thrown;
