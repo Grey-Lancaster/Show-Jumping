@@ -7,6 +7,7 @@ void audioKnock();                      // a pole hits the ground
 void audioBell();                       // the judge's start bell
 void audioApplause(float secs);         // the crowd claps for a while
 void audioEngine(bool on);              // the arena tractor putt-putting
+void audioOooh();                       // the crowd goes "ooooh" (a fall, an elimination)
 #ifdef BOARD_CYD28
 void audioBubbles44(int16_t *out, int n);   // CYD: the 44.1 kHz ambience stream (silent here; the HAL expects it)
 #endif

@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "1.6.12"
+#define FW_VERSION "1.6.13"
 
 TFT_eSPI tft = TFT_eSPI();
 #ifdef BOARD_FREENOVE_S3
@@ -178,6 +178,8 @@ struct Thrown { float x, y, a, x0, y0, x1, y1, walk, lead0; int d; };   // the r
 static Thrown thrown;
 static int roundsSinceFall = 0;
 static int forceNext = 0;           // testing (/api/force): 1 or 2 refusals, 3 a fall, in the next auto round
+static uint32_t clapUntil = 0;      // the stands show raised, clapping hands until then
+static void applaud(float secs) { audioApplause(secs); clapUntil = millis() + (uint32_t)(secs * 1000); }
 #define REFUSE_ONE 10       // percent of auto rounds where the horse refuses once, then jumps it
 #define REFUSE_TWO 5        // percent where he refuses twice at the same fence and is eliminated
 #define REFUSE_AWAY 110     // how far he goes back before turning to try again (local units)
@@ -367,12 +369,12 @@ static void updateRound(float dt) {
         Fence &f = fences[rnd.nf];
         Part &pt = f.p[horse.dir > 0 ? 0 : f.np - 1];
         if (pt.fall == 0) pt.fall = 0.001f;
-        audioKnock(); audioHoof(1.0f); audioHoof(0.9f);
+        audioKnock(); audioHoof(1.0f); audioHoof(0.9f); audioOooh();
         thrown.a = PI / 2; horse.ref = RF_DOWN; horse.rx = rnd.t;
         rnd.msgFrom = millis() + 1000; rnd.msgUntil = rnd.msgFrom + 3000;
       }
     } else if (horse.ref == RF_DOWN) {
-      if (rnd.t - horse.rx > 0.8f) { horse.ref = RF_UP; horse.rx = rnd.t; audioApplause(2.5f); }   // the crowd claps him up
+      if (rnd.t - horse.rx > 0.8f) { horse.ref = RF_UP; horse.rx = rnd.t; }
     } else if (horse.ref == RF_UP) {
       const float u = clamp01((rnd.t - horse.rx) / 0.8f);
       thrown.a = lerpf(PI / 2, 0, u);
@@ -396,6 +398,7 @@ static void updateRound(float dt) {
     } else if (horse.ref == RF_LEAD) {           // a moment to gather the reins, then walk him out of the ring
       // first a few steps sideways out to the clear track at the edge of the ring (no fences there), then along it
       const float wait = rnd.t - horse.rx, clearGy = horse.lane == 0 ? RAKE_NEAR - 2 : RAKE_FAR + 4;
+      if (!horse.walk && wait > 0.8f) applaud(3.5f);  // the crowd claps them out once they set off
       horse.walk = wait > 0.8f;
       if (horse.walk && fabsf(horse.gy - clearGy) > 0.5f) {
         horse.spd = 0; horse.ph += dt * 1.6f;
@@ -430,13 +433,14 @@ static void updateRound(float dt) {
       if (horse.spd < 0.08f) {                    // stopped: the refusal (and its 4 faults) is called 1.5 s later
         horse.spd = 0; horse.ref = RF_HOLD; horse.rx = rnd.t;
         rnd.msgFrom = millis() + 1500; rnd.msgUntil = rnd.msgFrom + 2500; rnd.pendFault = true;
+        if (rnd.elim) audioOooh();                 // the second one: the crowd knows what that means
       }
     } else if (horse.ref == RF_HOLD) {
       if (rnd.t - horse.rx > (rnd.elim ? 1.5f : 1.1f)) {   // eliminated: the banner comes up at the same 1.5 s
         if (rnd.elim) {                             // that's it: he walks out by the clear track at the edge, to the nearer end
           horse.ref = RF_EXIT; horse.spd = 0; horse.dir = horse.x < VW / 2 ? -1 : 1; rnd.timing = false;
           rnd.st = R_DONE; rnd.t = 0; lastWasLeader = false;
-          audioApplause(1.2f);
+          applaud(3.0f);                            // and claps him out as he turns to go
         } else { horse.dir = -horse.dir; horse.rx = horse.x; horse.ref = RF_AWAY; }
       }
     } else if (horse.ref == RF_AWAY || horse.ref == RF_BACK) {
@@ -482,7 +486,7 @@ static void updateRound(float dt) {
         rnd.timing = false;
         record();
         rnd.st = R_DONE; rnd.t = 0;
-        audioApplause(rnd.faults == 0 ? 4.5f : 2.0f);
+        applaud(rnd.faults == 0 ? 4.5f : 2.0f);
       }
     }
     if (horse.lane == 0 && approaching && !horse.turning && !horse.air && horse.x >= TURN_X && rnd.st == R_RIDE) { horse.turning = true; horse.th = 0; horse.tx0 = horse.x; }
@@ -746,8 +750,8 @@ static void initFans() {
 // Applause: hands go up all over the stands. After a clear round the whole crowd is on its feet, jumping up and down:
 // the tiers are repainted over the cached crowd and everyone is drawn again a few pixels up or down.
 static void drawClapping() {
-  const bool clear = !rnd.elim && rnd.faults == 0;
-  if (!(rnd.st == R_DONE && rnd.t < (clear ? 4.5f : 2.0f))) return;
+  const bool clear = rnd.st == R_DONE && !rnd.elim && rnd.faults == 0 && rnd.t < 4.5f;
+  if (!clear && millis() >= clapUntil) return;
   if (!cv.visible(STAND_ROW0 - 10, STAND_ROW0 + 5 * STAND_ROWH)) return;
   if (clear) {
     for (int k = 0; k * STAND_ROWH < 54; k++) {

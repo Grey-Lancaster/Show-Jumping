@@ -105,6 +105,23 @@ static float engineSample(uint32_t n) {
 }
 static uint32_t enginePos = 0;
 
+// ---- the crowd's "ooooh": a dozen voices on slightly different low notes, warm (few harmonics, like an "oo"), each
+// sliding down a little, swelling in over a quarter second and fading over about two.
+static volatile uint32_t oohPos = IDLE;
+static float oohPh[12];
+void audioOooh() { for (auto &p : oohPh) p = 0; oohPos = 0; }
+static float oohSample(uint32_t n) {
+  const float t = n / (float)SR;
+  const float env = min(1.0f, t / 0.25f) * expf(-max(0.0f, t - 0.5f) * 2.0f);
+  float v = 0;
+  for (int i = 0; i < 12; i++) {
+    const float f = (140.0f + i * 11.0f + (i & 1) * 23.0f) * (1.0f - 0.13f * min(t, 1.5f)) * (1.0f + 0.01f * sinC(t * (4.5f + i * 0.3f)));
+    oohPh[i] += f / SR; if (oohPh[i] > 1) oohPh[i] -= 1;
+    v += sinC(oohPh[i]) + 0.45f * sinC(2 * oohPh[i]) + 0.18f * sinC(3 * oohPh[i]);
+  }
+  return v * env * 0.045f;
+}
+
 static inline void add(int32_t &acc, float v) { acc += (int32_t)(v * 20000.0f); }
 
 void audioMix(int16_t *out, int n) {
@@ -120,6 +137,7 @@ void audioMix(int16_t *out, int n) {
     if (bellPos != IDLE) { add(acc, bellSample(bellPos)); if (++bellPos > SR * 3 / 2) bellPos = IDLE; }
     if (clapPos != IDLE) { add(acc, applauseSample(clapPos, clapLen)); if (++clapPos >= clapLen) clapPos = IDLE; }
     if (engineOn) add(acc, engineSample(enginePos++));
+    if (oohPos != IDLE) { add(acc, oohSample(oohPos)); if (++oohPos > SR * 5 / 2) oohPos = IDLE; }
     acc = on ? (acc * (int32_t)g_vol) / 60 : 0;
     out[i] = (int16_t)constrain(acc, -32768, 32767);
   }
