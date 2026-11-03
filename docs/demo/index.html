@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Show Jumping Demo</title>
+<link rel="icon" href="../favicon.ico">
+<style>
+  :root { --bg: #10241a; --card: #183626; --line: #2a4a36; --text: #eaf2e6; --dim: #9fb59a; --gold: #d8b44a; --btn2: #3c6a4c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  header img { width: 44px; height: 44px; }
+  h1 { margin: 0; font-size: 1.5rem; }
+  header small { color: var(--dim); display: block; }
+  a { color: var(--gold); }
+  .screen { position: relative; width: 100%; aspect-ratio: 3 / 2; background: #000; border: 6px solid #222; border-radius: 10px; overflow: hidden; touch-action: manipulation; }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; cursor: pointer; }
+  #start { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+           background: rgba(16, 36, 26, .72); border: 0; color: var(--text); font: inherit; font-size: 1.2rem; cursor: pointer; width: 100%; }
+  #start b { font-size: 1.6rem; color: var(--gold); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  @media (max-width: 720px) { .row { grid-template-columns: 1fr; } }
+  .c { background: var(--card); border-radius: 10px; padding: 14px; }
+  .c > b { display: block; margin-bottom: 6px; }
+  button.b { background: var(--gold); color: var(--bg); border: 0; border-radius: 6px; padding: 8px 12px; margin: 4px 4px 4px 0; font: inherit; font-weight: 600; cursor: pointer; }
+  button.g { background: var(--btn2); color: var(--text); }
+  label { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  input[type=range] { flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  td { padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  td:last-child, td:nth-child(3) { text-align: right; white-space: nowrap; }
+  #now { font-weight: 600; }
+  #rd, .note { color: var(--dim); font-size: .9rem; }
+  .note { margin-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="../logo.svg" alt="">
+    <div><h1>Show Jumping</h1><small>Running in your browser: the real firmware, compiled for the web</small></div>
+  </header>
+
+  <div class="screen">
+    <canvas id="cv" width="480" height="320" aria-label="Show jumping arena"></canvas>
+    <button id="start"><b>Click to start</b><span>with sound</span></button>
+  </div>
+
+  <div class="row">
+    <div class="c">
+      <b id="now">Loading...</b><span id="rd"></span>
+      <div>
+        <button class="b" data-api="/api/next">Next rider now</button>
+        <button class="b g" data-api="/api/rake">Rake the ring</button>
+      </div>
+      <div>
+        <button class="b g" data-force="refuse1">Show a refusal</button>
+        <button class="b g" data-force="refuse2">Show an elimination</button>
+        <button class="b g" data-force="fall">Show a fall</button>
+      </div>
+      <label><input type="checkbox" id="snd" checked> Sound</label>
+      <label>Volume <input type="range" id="vol" min="0" max="100" value="60"></label>
+      <p class="note">Click the arena between rounds to ride the next one yourself, then click before each fence to take off.
+        Too early or too late and the rail comes down; miss one and he refuses.</p>
+    </div>
+    <div class="c">
+      <b>Leaderboard</b>
+      <table id="lb"><tr><td>No rounds yet</td></tr></table>
+    </div>
+  </div>
+
+  <p class="note">The same code runs on a CYD or Freenove ESP32 display. <a href="../">Flash it to your board</a> ·
+    <a href="https://github.com/Grey-Lancaster/Show-Jumping">Source on GitHub</a></p>
+</main>
+
+<script src="showjump.js"></script>
+<script>
+(async () => {
+  const M = await ShowJump();
+  window.showjump = M;                             // for poking at it from the console
+  const W = M._demo_width(), H = M._demo_height();
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  cv.width = W; cv.height = H;
+  const img = ctx.createImageData(W, H), px = new Uint32Array(img.data.buffer);
+  const lut = new Uint32Array(65536);                 // RGB565 -> RGBA (little-endian ABGR)
+  for (let v = 0; v < 65536; v++) {
+    const r = (v >> 11) << 3, g = ((v >> 5) & 63) << 2, b = (v & 31) << 3;
+    lut[v] = 0xff000000 | (b << 16) | (g << 8) | r;
+  }
+
+  const api = url => {
+    const p = M.stringToNewUTF8(url);
+    const out = M.UTF8ToString(M._demo_api(p));
+    M._free(p);
+    try { return JSON.parse(out); } catch { return null; }
+  };
+
+  M._demo_init();
+  let last = performance.now();
+  function frame(t) {
+    M._demo_frame(Math.max(0, t - last)); last = t;
+    const ptr = M._demo_pixels();
+    if (ptr) {
+      const src = M.HEAPU16.subarray(ptr >> 1, (ptr >> 1) + W * H);
+      for (let i = 0; i < W * H; i++) px[i] = lut[src[i]];
+      ctx.putImageData(img, 0, 0);
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // A click or tap is a touch on the panel: held while the button is down, as a finger would be.
+  const at = e => { const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) * W / r.width), Math.round((e.clientY - r.top) * H / r.height)]; };
+  cv.addEventListener('pointerdown', e => { const [x, y] = at(e); M._demo_touch(1, x, y); });
+  addEventListener('pointerup', () => M._demo_touch(0, 0, 0));
+  addEventListener('pointercancel', () => M._demo_touch(0, 0, 0));
+
+  // Sound: the firmware's 16 kHz mixer, pulled by the browser. Browsers only allow it after a click.
+  let ac = null;
+  function startAudio() {
+    if (ac) return;
+    try { ac = new AudioContext({ sampleRate: 16000 }); } catch { ac = new AudioContext(); }
+    const step = 16000 / ac.sampleRate;               // 1 when the browser honours 16 kHz
+    const node = ac.createScriptProcessor(1024, 0, 1);
+    let carry = new Int16Array(0), pos = 0;
+    node.onaudioprocess = ev => {
+      const out = ev.outputBuffer.getChannelData(0);
+      for (let i = 0; i < out.length; i++) {
+        if (pos >= carry.length) {
+          const p = M._demo_audio(512);
+          carry = M.HEAP16.slice(p >> 1, (p >> 1) + 512); pos = 0;
+        }
+        out[i] = carry[Math.floor(pos)] / 32768;
+        pos += step;
+      }
+    };
+    node.connect(ac.destination);
+  }
+  const startBtn = document.getElementById('start');
+  startBtn.addEventListener('click', () => { startAudio(); startBtn.remove(); });
+
+  document.querySelectorAll('[data-api]').forEach(b => b.addEventListener('click', () => { api(b.dataset.api); status(); }));
+  document.querySelectorAll('[data-force]').forEach(b => b.addEventListener('click', () => {
+    api('/api/force?what=' + b.dataset.force);
+    api('/api/next');                                   // show it now: the next rider comes straight in
+    status();
+  }));
+  document.getElementById('snd').addEventListener('change', e => { api('/api/snd?on=' + (e.target.checked ? 1 : 0)); if (e.target.checked) startAudio(); });
+  document.getElementById('vol').addEventListener('input', e => api('/api/snd?vol=' + e.target.value));
+
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function status() {
+    const s = api('/api/status');
+    if (!s) return;
+    document.getElementById('now').textContent = s.rider + ' on ' + s.horse;
+    document.getElementById('rd').textContent = '  ' + s.state + ', ' + s.time.toFixed(1) + ' s, ' + s.faults + ' faults';
+    document.getElementById('lb').innerHTML = s.lb.map((r, i) =>
+      '<tr><td>' + (i + 1) + '</td><td>' + esc(r.n) + '</td><td>' + r.f + ' faults</td><td>' + r.t.toFixed(1) + ' s</td></tr>').join('')
+      || '<tr><td>No rounds yet</td></tr>';
+  }
+  status();
+  setInterval(status, 1000);
+})();
+</script>
+</body>
+</html>

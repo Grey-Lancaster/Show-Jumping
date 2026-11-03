@@ -4,6 +4,12 @@ An animated show jumping arena for the same five boards as Deer Hunt: the **CYD 
 
 ![Over fence 1](docs/img/jump.png)
 
+## Try it in your browser
+
+### [▶ Live demo](https://grey-lancaster.github.io/Show-Jumping/demo/)
+
+The real firmware (`src/main.cpp` and `src/audio.cpp`, unchanged) compiled to WebAssembly with a small browser board layer in `web/`: the same arena, rounds, refusals, falls, tractor and synthesised sounds. Click the arena to ride a round yourself; the buttons send the firmware's own `/api/...` commands. Build it with `web/build.sh` (needs [Emscripten](https://emscripten.org)), or `web/build-on-greyhound.sh` to build on Greyhound and copy the result back into `docs/demo/`.
+
 ## Easiest way: the web installer
 
 ### [➡ Open the Web Installer](https://grey-lancaster.github.io/Show-Jumping/)
@@ -54,4 +60,5 @@ Straight from the board (`/api/frame`, the web page's *Screenshot* button).
 - `src/main.cpp` - arena, course, horse and rider, rounds, scoreboard, web page.
 - `src/audio.cpp` - the synthesised sounds.
 - `src/board.h`, `src/hal_cyd28.cpp` (CYDs), `src/hal_freenove.cpp` + `src/es8311.*` + `lib_freenove/` (Freenove), `src/wifi_setup.cpp`, `src/canvas.h` - the board layer from Deer Hunt.
-- `docs/` - the web installer. `.github/` - CI, release notes and the installer refresh.
+- `web/` - the browser board layer for the demo (display, fonts, sound, clicks; WiFi and OTA stubbed out).
+- `docs/` - the web installer and `docs/demo/`. `.github/` - CI, release notes and the installer refresh.
