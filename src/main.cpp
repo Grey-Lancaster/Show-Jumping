@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "0.1.7"
+#define FW_VERSION "0.1.8"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -212,7 +212,7 @@ static float liftNow() { return horse.air ? 4 * horse.jH * horse.u * (1 - horse.
 // ---------------------------------------------------------------- the arena tractor
 // Every few rounds a little tractor drags a rake round the ring: along the front, round the right-hand end and back
 // along the far side behind the fences, while a sponsor's ad goes up over the stands.
-#define TRACTOR_EVERY 1           // rounds between rakes (every round for now, to watch it; 5 later)
+#define TRACTOR_EVERY 5           // rounds between rakes
 #define RAKE_NEAR 306             // its path along the front of the ring (nearer than every fence)
 #define RAKE_FAR 172              // and back along the far side (behind every fence)
 #define RAKE_CX 404               // the turn at the right-hand end
@@ -768,15 +768,11 @@ static void drawSponsor() {
   cv.fillRoundRect(96, 56, 288, 54, 8, RGB(206, 210, 216));
   cv.drawRoundRect(96, 56, 288, 54, 8, RGB(255, 255, 255));
   cv.drawRoundRect(98, 58, 284, 50, 7, RGB(130, 134, 142));
-  // a silver spoon
-  cv.fillEllipse(128, 72, 8, 11, RGB(150, 154, 162));
-  cv.fillEllipse(127, 71, 6, 9, RGB(236, 238, 242));
-  cv.drawWideLine(128, 82, 128, 102, 3, RGB(150, 154, 162), RGB(150, 154, 162));
   cv.setTextDatum(MC_DATUM);
   cv.setTextColor(RGB(60, 64, 72));
-  cv.drawString("Visit the", 258, 69, 2);
+  cv.drawString("Visit the", 240, 69, 2);
   cv.setTextColor(RGB(24, 28, 36));
-  cv.drawString("Silver Spoon", 258, 92, 4);
+  cv.drawString("Silver Spoon", 240, 92, 4);
 }
 
 static void drawScene(float t) {
