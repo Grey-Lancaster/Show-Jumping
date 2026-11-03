@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "1.6.14"
+#define FW_VERSION "1.6.15"
 
 TFT_eSPI tft = TFT_eSPI();
 #ifdef BOARD_FREENOVE_S3
@@ -193,6 +193,7 @@ struct Result { char name[2 * NAME_LEN + 2]; int faults; float time; };
 static Result board[BOARD_TOP];
 static int nBoard = 0;
 static bool lastWasLeader = false;
+static int lastPlace = 0;        // where the last round went on the board (1 = leader); above BOARD_TOP = off the board
 
 static const char *riderName() { return rnd.you ? "You" : RIDERS[rnd.rider].name; }
 
@@ -204,10 +205,16 @@ static void record() {
   for (int i = 0; i < nBoard; i++)
     if (r.faults < board[i].faults || (r.faults == board[i].faults && r.time < board[i].time)) { at = i; break; }
   lastWasLeader = at == 0;
+  lastPlace = at + 1;
   if (at >= BOARD_TOP) return;
   for (int i = min(nBoard, BOARD_TOP - 1); i > at; i--) board[i] = board[i - 1];
   board[at] = r;
   if (nBoard < BOARD_TOP) nBoard++;
+}
+
+static const char *ordinal(int n) {
+  if (n % 100 >= 11 && n % 100 <= 13) return "th";
+  return n % 10 == 1 ? "st" : n % 10 == 2 ? "nd" : n % 10 == 3 ? "rd" : "th";
 }
 
 static float autoErr() { return (float)(random(-20, 21) + random(-20, 21) + random(-20, 21)); }   // roughly normal, sd ~20
@@ -843,14 +850,16 @@ static void drawScoreboard() {
     cv.drawString(rnd.fell ? "RIDER FALL" : rnd.elim ? "2nd REFUSAL" : "REFUSAL  +4", 240, 71, FONT_HEAD);
   }
   if (rnd.st == R_DONE && cv.visible(54, 112)) {   // up over the stands, so the ring stays clear (he leaves after 2 refusals)
-    panel(120, 56, 240, 54);
+    panel(100, 56, 280, 54);
     cv.setTextDatum(MC_DATUM);
     if (rnd.elim) { cv.setTextColor(RGB(255, 90, 80)); cv.drawString("ELIMINATED", 240, 73, FONT_HEAD); }
     else if (rnd.faults == 0) { cv.setTextColor(RGB(120, 240, 120)); cv.drawString("CLEAR ROUND!", 240, 73, FONT_HEAD); }
     else { cv.setTextColor(RGB(255, 170, 70)); snprintf(b, sizeof(b), "%d FAULTS", rnd.faults); cv.drawString(b, 240, 73, FONT_HEAD); }
     cv.setTextColor(RGB(255, 255, 255));
     if (rnd.elim) snprintf(b, sizeof(b), rnd.fell ? "Rider fall" : "Two refusals");
-    else snprintf(b, sizeof(b), lastWasLeader ? "%.1f s   New leader!" : "Time %.1f s", rnd.time);
+    else if (lastWasLeader) snprintf(b, sizeof(b), "%.1f s   1st, new leader!", rnd.time);
+    else if (lastPlace > BOARD_TOP) snprintf(b, sizeof(b), "%.1f s   outside top %d", rnd.time, BOARD_TOP);
+    else snprintf(b, sizeof(b), "%.1f s   %d%s place", rnd.time, lastPlace, ordinal(lastPlace));
     cv.drawString(b, 240, 97, FONT_TEXT);
   }
 }
