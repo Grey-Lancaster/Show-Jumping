@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "0.1.5"
+#define FW_VERSION "0.1.6"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -138,12 +138,13 @@ struct Horse {
   float stopX, brake; // refusal: where his nose stops short of the fence, and over how many px he slows down
 };
 enum Refusal { RF_NONE, RF_BRAKE, RF_HOLD, RF_AWAY, RF_BACK };
-#define REFUSE_CHANCE 100   // percent of auto rounds with one refusal (every round for now, to watch it)
+#define REFUSE_ONE 10       // percent of auto rounds where the horse refuses once, then jumps it
+#define REFUSE_TWO 5        // percent where he refuses twice at the same fence and is eliminated
 #define REFUSE_AWAY 110     // how far he goes back before turning to try again (local units)
 static Horse horse;
 struct Round { RoundSt st; float t; int rider; bool you; float time; bool timing, started; int faults; int nf;
-               int refuseAt, refusals; bool elim; uint32_t msgFrom, msgUntil; bool pendFault; };   // the refusal box shows msgFrom..msgUntil   // refuseAt: the fence the auto horse stops at, or -1
-static Round rnd = {R_WAIT, 0, 0, false, 0, false, false, 0, 0, -1, 0, false, 0, 0, false};
+               int refuseAt, refusePlan, refusals; bool elim; uint32_t msgFrom, msgUntil; bool pendFault; };   // the refusal box shows msgFrom..msgUntil   // refuseAt: the fence the auto horse stops at, or -1
+static Round rnd = {R_WAIT, 0, 0, false, 0, false, false, 0, 0, -1, 0, 0, false, 0, 0, false};
 
 struct Result { char name[24]; int faults; float time; };
 static Result board[5];
@@ -171,7 +172,8 @@ static float autoErr() { return (float)(random(-20, 21) + random(-20, 21) + rand
 static void startRide() {
   resetCourse();
   rnd.st = R_RIDE; rnd.t = 0; rnd.time = 0; rnd.timing = false; rnd.started = false; rnd.faults = 0; rnd.nf = 0;
-  rnd.refuseAt = random(100) < REFUSE_CHANCE ? random(NFENCE) : -1; rnd.refusals = 0; rnd.elim = false; rnd.msgFrom = rnd.msgUntil = 0; rnd.pendFault = false;
+  { const int r = random(100); rnd.refusePlan = r < REFUSE_TWO ? 2 : r < REFUSE_TWO + REFUSE_ONE ? 1 : 0; }
+  rnd.refuseAt = rnd.refusePlan ? random(NFENCE) : -1; rnd.refusals = 0; rnd.elim = false; rnd.msgFrom = rnd.msgUntil = 0; rnd.pendFault = false;
   horse.ref = RF_NONE; horse.spd = 1;
   horse.x = -70; horse.lane = 0; horse.gy = LANE_Y[0]; horse.dir = 1; horse.air = false; horse.turning = false; horse.err = autoErr();
   horse.pace = RIDERS[rnd.rider].pace * (0.97f + random(61) / 1000.0f);
@@ -243,16 +245,17 @@ static void updateRound(float dt) {
     }
     // refusals: the auto horse stops at one fence a round; yours stops at any fence you don't jump. He props to a halt,
     // the rider turns him away, loops back round and tries again. 4 faults each; a second one for you is elimination.
-    if (rnd.st == R_RIDE && horse.ref == RF_NONE && !horse.air && !horse.turning && rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
+    if (rnd.st == R_RIDE && (horse.ref == RF_NONE || horse.ref == RF_BACK) && !horse.air && !horse.turning && rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
       const Fence &f = fences[rnd.nf];
       const float ahead = (f.x - horse.x) * horse.dir;
       // stop with his nose just short of the rails: the auto horse brakes over a stride, yours stops short and late
       const float stopAhead = (rnd.you ? 38 : 44) * s, brake = (rnd.you ? 10 : 34) * s;
       if ((!rnd.you && rnd.nf == rnd.refuseAt && ahead <= stopAhead + brake) || (rnd.you && ahead <= stopAhead + brake)) {
-        horse.ref = RF_BRAKE; horse.laneGy = horse.gy;
+        if (horse.ref == RF_NONE) horse.laneGy = horse.gy;      // (coming back round: keep the lane he looped from)
+        horse.ref = RF_BRAKE;
         horse.stopX = f.x - horse.dir * stopAhead; horse.brake = brake;
         rnd.refusals++;
-        if (rnd.you && rnd.refusals >= 2) rnd.elim = true;
+        if (rnd.refusals >= 2) rnd.elim = true;
       }
     }
     if (horse.ref == RF_BRAKE) {
@@ -276,7 +279,7 @@ static void updateRound(float dt) {
       const float d = fabsf(horse.x - horse.rx) / (REFUSE_AWAY * s), side = horse.lane == 0 ? -12 : 12;   // loop out toward the middle
       if (horse.ref == RF_AWAY) {
         horse.gy = horse.laneGy + side * clamp01(d);
-        if (d >= 1) { horse.ref = RF_BACK; horse.dir = -horse.dir; horse.rx = horse.x; rnd.refuseAt = -1; horse.err = autoErr() * 0.3f; }
+        if (d >= 1) { horse.ref = RF_BACK; horse.dir = -horse.dir; horse.rx = horse.x; if (rnd.refusals >= rnd.refusePlan) rnd.refuseAt = -1; horse.err = autoErr() * 0.3f; }
       } else {
         horse.gy = horse.laneGy + side * (1 - clamp01(d));
         if (d >= 1) { horse.ref = RF_NONE; horse.gy = horse.laneGy; }
