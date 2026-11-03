@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "1.6.10"
+#define FW_VERSION "1.6.12"
 
 TFT_eSPI tft = TFT_eSPI();
 #ifdef BOARD_FREENOVE_S3
@@ -170,12 +170,14 @@ struct Horse {
   bool walk;          // walking (being led out) instead of cantering
 };
 enum Refusal { RF_NONE, RF_BRAKE, RF_HOLD, RF_AWAY, RF_BACK,
-               RF_FSTOP, RF_THROW, RF_DOWN, RF_UP, RF_TOHORSE, RF_LEAD };   // the second row: a fall
+               RF_FSTOP, RF_THROW, RF_DOWN, RF_UP, RF_TOHORSE, RF_LEAD,     // the second row: a fall
+               RF_EXIT };                                                    // eliminated after two refusals: walks out
 #define FALL_EVERY 9        // rounds between falls
 #define FALL_STOP 42        // where the horse digs in: his middle this far short of the fence (local units)
 struct Thrown { float x, y, a, x0, y0, x1, y1, walk, lead0; int d; };   // the rider on foot: hip, forward tilt, flight, facing
 static Thrown thrown;
 static int roundsSinceFall = 0;
+static int forceNext = 0;           // testing (/api/force): 1 or 2 refusals, 3 a fall, in the next auto round
 #define REFUSE_ONE 10       // percent of auto rounds where the horse refuses once, then jumps it
 #define REFUSE_TWO 5        // percent where he refuses twice at the same fence and is eliminated
 #define REFUSE_AWAY 110     // how far he goes back before turning to try again (local units)
@@ -214,7 +216,11 @@ static void startRide() {
   { const int r = random(100); rnd.refusePlan = r < REFUSE_TWO ? 2 : r < REFUSE_TWO + REFUSE_ONE ? 1 : 0; }
   rnd.refuseAt = rnd.refusePlan ? random(NFENCE) : -1; rnd.refusals = 0;
   rnd.fallAt = -1; rnd.fell = false;
-  if (!rnd.you && ++roundsSinceFall >= FALL_EVERY) { roundsSinceFall = 0; rnd.fallAt = random(NFENCE); rnd.refusePlan = 0; rnd.refuseAt = -1; } rnd.elim = false; rnd.msgFrom = rnd.msgUntil = 0; rnd.pendFault = false;
+  if (!rnd.you && ++roundsSinceFall >= FALL_EVERY) { roundsSinceFall = 0; rnd.fallAt = random(NFENCE); rnd.refusePlan = 0; rnd.refuseAt = -1; }
+  if (!rnd.you && forceNext) {
+    rnd.refusePlan = forceNext < 3 ? forceNext : 0; rnd.refuseAt = forceNext < 3 ? random(NFENCE) : -1; rnd.fallAt = forceNext == 3 ? random(NFENCE) : -1;
+    forceNext = 0;
+  } rnd.elim = false; rnd.msgFrom = rnd.msgUntil = 0; rnd.pendFault = false;
   horse.ref = RF_NONE; horse.spd = 1; horse.riderOn = true; horse.walk = false;
   horse.x = -70; horse.lane = 0; horse.gy = LANE_Y[0]; horse.dir = 1; horse.air = false; horse.turning = false; horse.err = autoErr();
   horse.pace = RIDERS[rnd.rider].pace * (0.97f + random(61) / 1000.0f);
@@ -381,6 +387,12 @@ static void updateRound(float dt) {
         thrown.lead0 = exitDir == horse.dir ? 20 : -20;     // (turning him round puts the rider at his back end for a moment)
         horse.dir = exitDir; thrown.d = horse.dir;
       } else thrown.x += (tx > thrown.x ? 1 : -1) * step;
+    } else if (horse.ref == RF_EXIT) {           // a few steps sideways to the edge track, then walk along it and out
+      const float clearGy = horse.lane == 0 ? RAKE_NEAR - 2 : RAKE_FAR + 4;
+      horse.walk = true;
+      if (fabsf(horse.gy - clearGy) > 0.5f) { horse.spd = 0; horse.ph += dt * 1.6f; horse.gy += constrain(clearGy - horse.gy, -24 * dt, 24 * dt); }
+      else horse.spd = 0.35f;
+      if (horse.x < -70 || horse.x > VW + 70) { horse.ref = RF_NONE; horse.walk = false; horse.spd = 1; horse.x = horse.x < 0 ? -95 : VW + 95; }
     } else if (horse.ref == RF_LEAD) {           // a moment to gather the reins, then walk him out of the ring
       // first a few steps sideways out to the clear track at the edge of the ring (no fences there), then along it
       const float wait = rnd.t - horse.rx, clearGy = horse.lane == 0 ? RAKE_NEAR - 2 : RAKE_FAR + 4;
@@ -421,12 +433,11 @@ static void updateRound(float dt) {
       }
     } else if (horse.ref == RF_HOLD) {
       if (rnd.t - horse.rx > (rnd.elim ? 1.5f : 1.1f)) {   // eliminated: the banner comes up at the same 1.5 s
-        horse.dir = -horse.dir; horse.rx = horse.x;
-        if (rnd.elim) {                             // that's it: he canters off the way he came
-          horse.ref = RF_NONE; horse.spd = 1; rnd.timing = false;
+        if (rnd.elim) {                             // that's it: he walks out by the clear track at the edge, to the nearer end
+          horse.ref = RF_EXIT; horse.spd = 0; horse.dir = horse.x < VW / 2 ? -1 : 1; rnd.timing = false;
           rnd.st = R_DONE; rnd.t = 0; lastWasLeader = false;
           audioApplause(1.2f);
-        } else horse.ref = RF_AWAY;
+        } else { horse.dir = -horse.dir; horse.rx = horse.x; horse.ref = RF_AWAY; }
       }
     } else if (horse.ref == RF_AWAY || horse.ref == RF_BACK) {
       horse.spd = min(1.0f, horse.spd + dt * 1.8f);
@@ -796,14 +807,19 @@ static void drawScoreboard() {
     if (rnd.st == R_RAKE) snprintf(b, sizeof(b), "Raking the ring");
     else snprintf(b, sizeof(b), "Time %.1f   Faults %d", rnd.time, rnd.faults);
     cv.drawString(b, 12, 27, FONT_TEXT);
-    panel(VW - 200, 3, 196, 26);
-    cv.setTextColor(RGB(234, 234, 220));
+    // The leader panel grows to fit its text, up to the scoreboard on its left; a name too long even for that is cut short.
+    const float maxW = VW - 248 - 4, pad = 16;
     if (nBoard) {                                   // just the rider: rider and horse can be 15 letters each
       const char *slash = strchr(board[0].name, '/');
-      snprintf(b, sizeof(b), "Leader %.*s  %d/%.1f", slash ? (int)(slash - board[0].name) : NAME_LEN, board[0].name, board[0].faults, board[0].time);
+      int n = slash ? (int)(slash - board[0].name) : (int)strlen(board[0].name);
+      do snprintf(b, sizeof(b), "Leader %.*s  %d/%.1f", n, board[0].name, board[0].faults, board[0].time);
+      while (cv.s->textWidth(b, FONT_TEXT) / cv.sx + pad > maxW && --n > 1);
     }
     else snprintf(b, sizeof(b), "Leader: no rounds yet");
-    cv.drawString(b, VW - 192, 8, FONT_TEXT);
+    const float w = max(196.0f, min(maxW, cv.s->textWidth(b, FONT_TEXT) / cv.sx + pad));
+    panel(VW - 4 - w, 3, w, 26);
+    cv.setTextColor(RGB(234, 234, 220));
+    cv.drawString(b, VW - 4 - w + 8, 8, FONT_TEXT);
   }
   if (rnd.st == R_RIDE && rnd.you && cv.visible(30, 52)) {
     cv.setTextDatum(TL_DATUM); cv.setTextColor(RGB(255, 255, 255));
@@ -1221,6 +1237,11 @@ static void setupWeb() {
     String j = "[";
     for (int i = 0; i < NRIDERS; i++) j += String(i ? "," : "") + "{\"r\":\"" + RIDERS[i].name + "\",\"h\":\"" + RIDERS[i].horse + "\"}";
     server.send(200, "application/json", j + "]");
+  });
+  server.on("/api/force", HTTP_ANY, []() {        // testing: what=refuse1|refuse2|fall happens in the next auto round
+    String w = server.arg("what");
+    forceNext = w == "refuse1" ? 1 : w == "refuse2" ? 2 : w == "fall" ? 3 : 0;
+    server.send(200, "application/json", forceNext ? "{\"ok\":true}" : "{\"error\":\"what=refuse1|refuse2|fall\"}");
   });
   server.on("/api/next", HTTP_ANY, []() { nextRider(); rnd.t = 3; server.send(200, "application/json", statusJson()); });
   server.on("/api/recal", HTTP_ANY, []() {      // forget the touch calibration and restart into the five crosshairs

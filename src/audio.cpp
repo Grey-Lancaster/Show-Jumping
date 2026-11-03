@@ -48,7 +48,7 @@ static float knockSample(uint32_t n) {
   return v;
 }
 
-// ---- the start bell: two strokes of a small hand bell
+// ---- the start bell: two strokes of a small hand bell (kept soft: it is a signal, not an alarm)
 static volatile uint32_t bellPos = IDLE;
 void audioBell() { bellPos = 0; }
 static float bellSample(uint32_t n) {
@@ -59,23 +59,40 @@ static float bellSample(uint32_t n) {
     if (u <= 0) continue;
     v += expf(-u * 4.5f) * min(1.0f, u / 0.002f) * (0.55f * sinC(1175.0f * u) + 0.25f * sinC(2960.0f * u) + 0.12f * sinC(4110.0f * u));
   }
-  return v;
+  return v * 0.45f;
 }
 
-// ---- applause: many short claps at random times, swelling in and dying away
+// ---- applause: a crowd of hand claps. Each clap is a short burst of noise through its own band-pass filter (a clap
+// has a "pitch" somewhere around 0.8-2.5 kHz depending on the hands), so the whole sounds like palms, not hiss.
+// About 200 claps a second overlap; the crowd swells in quickly and dies away more slowly.
 static volatile uint32_t clapPos = IDLE, clapLen = 0;
 void audioApplause(float secs) { clapLen = (uint32_t)(secs * SR); clapPos = 0; }
-static float clapEnv[6];      // the claps currently sounding: remaining loudness
+struct Clap { float env, f, lp, bp; };      // env: remaining loudness; f: filter tuning; lp/bp: filter state
+static Clap claps[16];
 static float applauseSample(uint32_t n, uint32_t len) {
   const float t = n / (float)len;
-  const float env = min(1.0f, t * 6.0f) * min(1.0f, (1.0f - t) * 2.5f);
+  const float env = min(1.0f, t * 5.0f) * min(1.0f, (1.0f - t) * 1.6f);
   rndState = rndState * 1664525u + 1013904223u;
-  if ((rndState >> 20) < 4096u * 90u / SR) {                        // about 90 claps a second
-    for (auto &c : clapEnv) if (c < 0.02f) { c = 0.5f + (rndState & 255) / 512.0f; break; }
+  if ((rndState >> 20) < 4096u * 200u / SR) {
+    for (auto &c : claps) if (c.env < 0.02f) {
+      const float fc = 800 + (rndState & 1023) * 1.7f;              // 0.8 .. 2.5 kHz
+      c.env = 0.4f + ((rndState >> 10) & 255) / 425.0f;
+      c.f = 2 * sinC(fc / (2.0f * SR));                             // 2 sin(pi fc / SR)
+      c.lp = c.bp = 0;
+      break;
+    }
   }
   float v = 0;
-  for (auto &c : clapEnv) if (c > 0.02f) { v += c * noise(); c *= 0.988f; }   // each clap rings ~5 ms
-  return v * env * 0.45f;
+  for (auto &c : claps) {
+    if (c.env < 0.02f) continue;
+    const float x = noise() * c.env;
+    c.lp += c.f * c.bp;                                             // state-variable band-pass, Q about 1
+    const float hp = x - c.lp - c.bp;
+    c.bp += c.f * hp;
+    v += c.bp;
+    c.env *= 0.9893f;                                               // each clap dies away in ~10 ms
+  }
+  return v * env * 0.32f;
 }
 
 // ---- the tractor: a little diesel putt-putt, a low thump about 13 times a second
