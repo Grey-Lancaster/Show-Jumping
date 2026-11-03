@@ -11,7 +11,7 @@ Use **Chrome or Edge on a computer**, plug the board in by USB, click **Connect*
 Prefer to download files? The [latest release](../../releases/latest) has a factory file (a new board) and an update file (a board that is already running; keeps WiFi and settings).
 
 ## What it does
-- A horse and rider canter round a **course of six fences** in front of a packed grandstand: the near line left to right (fences 1-3: a vertical, an oxer, a wall), then the far line right to left (4-6).
+- A horse and rider canter round a **course of five fences** in front of a packed grandstand: the near line left to right (a vertical and an oxer), a U-turn at the right end of the ring, then the far line right to left (a wall, a vertical and an oxer).
 - Every round is **timed**; a knocked rail falls to the sand and costs **4 faults**. At the finish the scoreboard shows *Clear round!* or the faults, the crowd claps, and the next of eight riders comes in. The leader is shown top-right.
 - **Tap the screen to ride yourself.** A tap between rounds makes the next round yours; during a round every tap makes the horse take off right there, so time it before each fence (too early or too late and the rail comes down; no tap and he goes straight through it).
 - Sounds, all synthesised: canter hoofbeats, the start bell, knocked poles, applause.

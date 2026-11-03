@@ -1,6 +1,6 @@
 // Show Jumping - an animated show jumping arena for the CYD 4.0" (480x320, no PSRAM).
-// A horse and rider canter round a course of six fences in front of a grandstand: the near line left to right (1-3),
-// then the far line right to left (4-6). Each round is timed and a knocked rail costs 4 faults; the crowd claps at the
+// A horse and rider canter round a course of five fences in front of a grandstand: the near line left to right (1-2),
+// a U-turn at the right end of the ring, then the far line right to left (3-5). Each round is timed and a knocked rail costs 4 faults; the crowd claps at the
 // end and the next rider comes in. Touch the screen to take over: every tap makes the horse take off right there, so
 // time it before each fence (a tap between rounds starts your own round). Same structure as Deer Hunt: the world lives
 // in a 480x320 virtual space, the CYD renders and pushes it in horizontal strips over a scenery cache kept in flash.
@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "0.1.1"
+#define FW_VERSION "0.1.2"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -63,9 +63,13 @@ static inline float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 #define SAND_Y 140                 // where the arena sand starts (below the perimeter boards)
 static const float LANE_Y[2] = {282, 204};   // ground rows of the near line (left to right) and the far line (right to left)
 static const int LANE_DIR[2] = {1, -1};
-static float scaleAt(float y) { return 0.82f + 0.40f * (y - 204) / 78.0f; }    // far line 0.82, near line 1.22
+static float scaleAt(float y) { return 0.50f + 0.18f * (y - 204) / 78.0f; }    // far line 0.50, near line 0.68
+// The U-turn at the right end of the ring, from the near line round to the far line, seen from the side: an arc
+// that goes out to TURN_R past where it starts and back across the depth between the two lines.
+#define TURN_X 392                 // the near line hands over to the turn here
+#define TURN_R 50
 #define START_X 30                 // timer starts here on the near line
-#define FINISH_X 46                // and stops here on the far line
+#define FINISH_X 40                // and stops here on the far line
 
 // ---------------------------------------------------------------- riders and horses (made up)
 struct Coat { uint16_t body, shade, mane, lower; };
@@ -93,17 +97,17 @@ static void initRiders() {
 enum FType { F_VERT, F_OXER, F_WALL };
 struct Part { float off, h, fall; bool checked; };   // off: along x (local units), h: top rail height (local units)
 struct Fence { int lane; float x; FType type; uint16_t c1, c2; int np; Part p[2]; bool knocked; };
-static Fence fences[6];
-#define NFENCE 6
+static Fence fences[5];
+#define NFENCE 5
 
 static void initCourse() {
   const uint16_t W = RGB(245, 245, 240);
-  fences[0] = {0, 120, F_VERT, RGB(210, 40, 40), W, 1, {{0, 36}}};
-  fences[1] = {0, 252, F_OXER, RGB(40, 90, 190), W, 2, {{-8, 32}, {8, 35}}};
-  fences[2] = {0, 384, F_WALL, RGB(30, 140, 70), W, 1, {{0, 38}}};
-  fences[3] = {1, 370, F_OXER, RGB(240, 180, 30), RGB(40, 90, 190), 2, {{-8, 35}, {8, 32}}};
-  fences[4] = {1, 244, F_VERT, RGB(130, 50, 160), W, 1, {{0, 38}}};
-  fences[5] = {1, 110, F_OXER, RGB(210, 40, 40), RGB(30, 140, 70), 2, {{-8, 36}, {8, 34}}};
+  // spaced so there are a couple of canter strides between landing and the next take-off
+  fences[0] = {0, 122, F_VERT, RGB(210, 40, 40), W, 1, {{0, 36}}};
+  fences[1] = {0, 284, F_OXER, RGB(40, 90, 190), W, 2, {{-8, 32}, {8, 35}}};
+  fences[2] = {1, 318, F_WALL, RGB(30, 140, 70), W, 1, {{0, 38}}};
+  fences[3] = {1, 204, F_VERT, RGB(130, 50, 160), W, 1, {{0, 38}}};
+  fences[4] = {1, 90, F_OXER, RGB(240, 180, 30), RGB(40, 90, 190), 2, {{-8, 36}, {8, 34}}};
 }
 
 static void resetCourse() {
@@ -122,9 +126,10 @@ struct Horse {
   bool air;           // in a jump
   float jx0, jlen, jH, u;   // jump: take-off x, length (screen px), peak lift (local units), progress 0..1
   float err;          // the auto rider's take-off error for the next fence (local units)
-  bool turning;       // off screen at the end of the ring, coming round to the far line
+  float gy;           // ground row under the horse (a lane, or in between on the turn)
+  bool turning;       // on the U-turn from the near line to the far line
+  float th, tx0;      // turn: angle 0..pi, and the x it started from
   float pace;         // this round's speed: the horse's own pace, a little faster or slower on the day
-  float turnT;
 };
 static Horse horse;
 struct Round { RoundSt st; float t; int rider; bool you; float time; bool timing, started; int faults; int nf; };
@@ -156,7 +161,7 @@ static float autoErr() { return (float)(random(-20, 21) + random(-20, 21) + rand
 static void startRide() {
   resetCourse();
   rnd.st = R_RIDE; rnd.t = 0; rnd.time = 0; rnd.timing = false; rnd.started = false; rnd.faults = 0; rnd.nf = 0;
-  horse.x = -70; horse.lane = 0; horse.dir = 1; horse.air = false; horse.turning = false; horse.err = autoErr();
+  horse.x = -70; horse.lane = 0; horse.gy = LANE_Y[0]; horse.dir = 1; horse.air = false; horse.turning = false; horse.err = autoErr();
   horse.pace = RIDERS[rnd.rider].pace * (0.97f + random(61) / 1000.0f);
   audioBell();
 }
@@ -165,11 +170,11 @@ static void nextRider() {
   rnd.rider = (rnd.rider + 1) % NRIDERS;
   rnd.you = false; rnd.st = R_WAIT; rnd.t = 0;
   resetCourse();
-  horse.x = -200; horse.turning = false; horse.air = false;
+  horse.x = -200; horse.gy = LANE_Y[0]; horse.turning = false; horse.air = false;
 }
 
 static void startJump(float len, float peak) {
-  const float s = scaleAt(LANE_Y[horse.lane]);
+  const float s = scaleAt(horse.gy);
   horse.air = true; horse.u = 0; horse.jx0 = horse.x; horse.jlen = len * s; horse.jH = peak;
   audioHoof(0.9f);
 }
@@ -180,7 +185,7 @@ static void jumpFence(const Fence &f) { startJump(jumpLen(f), fenceTop(f) + 4); 
 static void tapJump() {
   if (horse.air || horse.turning || horse.x < -10 || horse.x > VW + 10) return;
   rnd.you = true;
-  const float s = scaleAt(LANE_Y[horse.lane]);
+  const float s = scaleAt(horse.gy);
   if (rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
     const float ahead = (fences[rnd.nf].x - horse.x) * horse.dir;
     if (ahead > -10 * s && ahead < 230 * s) { jumpFence(fences[rnd.nf]); return; }
@@ -198,13 +203,20 @@ static void updateRound(float dt) {
     return;
   }
   if (rnd.timing) rnd.time += dt;
-  if (horse.turning) {
-    horse.turnT -= dt;
-    if (horse.turnT <= 0) { horse.turning = false; horse.lane = 1; horse.dir = -1; horse.x = VW + 70; horse.err = autoErr(); }
-  } else if (horse.x > -90 && horse.x < VW + 90) {
-    const float s = scaleAt(LANE_Y[horse.lane]);
+  if (horse.x > -90 && horse.x < VW + 90) {
+    const float s = scaleAt(horse.gy);
     const float v = 118 * s * horse.pace;
-    horse.x += horse.dir * v * dt;
+    if (horse.turning) {                   // along the arc at the same speed; he faces the other way past the apex
+      const float half = (LANE_Y[0] - LANE_Y[1]) * 0.5f;
+      const float spd = sqrtf(sq(TURN_R * cosf(horse.th)) + sq(half * sinf(horse.th))) + 1;
+      horse.th += v * dt / spd;
+      if (horse.th >= PI) { horse.turning = false; horse.lane = 1; horse.gy = LANE_Y[1]; horse.x = horse.tx0; horse.dir = -1; horse.err = autoErr(); }
+      else {
+        horse.x = horse.tx0 + TURN_R * sinf(horse.th);
+        horse.gy = LANE_Y[1] + half + half * cosf(horse.th);
+        horse.dir = horse.th < PI / 2 ? 1 : -1;
+      }
+    } else horse.x += horse.dir * v * dt;
     const bool onScreen = horse.x > -40 && horse.x < VW + 40;
     if (horse.air) {
       horse.u += v * dt / horse.jlen;
@@ -250,7 +262,7 @@ static void updateRound(float dt) {
         audioApplause(rnd.faults == 0 ? 4.5f : 2.0f);
       }
     }
-    if (horse.lane == 0 && horse.x > VW + 70 && rnd.st == R_RIDE) { horse.turning = true; horse.turnT = 2.2f; horse.air = false; }
+    if (horse.lane == 0 && !horse.turning && !horse.air && horse.x >= TURN_X && rnd.st == R_RIDE) { horse.turning = true; horse.th = 0; horse.tx0 = horse.x; }
   }
   if (rnd.st == R_DONE && rnd.t > 8) nextRider();
 }
@@ -390,10 +402,10 @@ static void legPose(int i, float &a1, float &a2) {
 }
 
 static void drawHorse() {
-  if (horse.turning || horse.x < -80 || horse.x > VW + 80) return;
+  if (horse.x < -80 || horse.x > VW + 80) return;
   const Rider &rd = RIDERS[rnd.rider];
   const Coat &co = COATS[rd.coat];
-  const float ly = LANE_Y[horse.lane], s = scaleAt(ly);
+  const float ly = horse.gy, s = scaleAt(ly);
   const float k = horse.air ? clamp01(min(horse.u, 1 - horse.u) * 6) : 0;   // how far into the jump pose
   const float stride = horse.ph * 2 * PI;
   float lift = horse.air ? 4 * horse.jH * horse.u * (1 - horse.u) : 1.2f * fabsf(sinf(stride * 0.5f + 0.6f));
@@ -564,7 +576,7 @@ static void drawScene(float t) {
   drawClapping();
   for (int lane = 1; lane >= 0; lane--) {       // far line first
     for (auto &f : fences) if (f.lane == lane) drawFence(f, false);
-    if (horse.lane == lane) drawHorse();
+    if ((horse.gy < (LANE_Y[0] + LANE_Y[1]) * 0.5f ? 1 : 0) == lane) drawHorse();
     for (auto &f : fences) if (f.lane == lane) drawFence(f, true);
   }
   drawScoreboard();
@@ -623,10 +635,15 @@ static void renderBackground(Canvas &c) {
   const uint16_t lightSand = RGB(236, 214, 170), darkSand = RGB(186, 152, 104);
   for (int i = 0; i < 1400; i++) { const int x = rnd2(VW), y = SAND_Y + 8 + rnd2(VH - SAND_Y - 8); c.drawPixel(x, y, (i & 1) ? lightSand : darkSand); }
   for (int lane = 0; lane < 2; lane++)
-    for (int x = -10; x < VW + 10; x += 5) {
+    for (int x = -10; x < TURN_X; x += 5) {
       const float s = scaleAt(LANE_Y[lane]);
       c.fillEllipse(x + rnd2(4), LANE_Y[lane] + rnd2(9) - 4, 5 * s, 1.6f * s, mix(200, 166, 114, 180, 146, 98, rnd2(100) / 100.0f));
     }
+  for (int i = 0; i <= 40; i++) {                     // and round the turn
+    const float th = PI * i / 40, half = (LANE_Y[0] - LANE_Y[1]) * 0.5f;
+    const float y = LANE_Y[1] + half + half * cosf(th), s = scaleAt(y);
+    c.fillEllipse(TURN_X + TURN_R * sinf(th) + rnd2(4) - 2, y + rnd2(5) - 2, 5 * s, 1.6f * s, mix(200, 166, 114, 180, 146, 98, rnd2(100) / 100.0f));
+  }
   // start (near line) and finish (far line) flags: red on the right, white on the left of the line of travel
   for (int k = 0; k < 2; k++) {
     const float ly = LANE_Y[k], s = scaleAt(ly), x = k == 0 ? START_X : FINISH_X;
