@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "1.6.9"
+#define FW_VERSION "1.6.10"
 
 TFT_eSPI tft = TFT_eSPI();
 #ifdef BOARD_FREENOVE_S3
@@ -1108,7 +1108,7 @@ static void latchTouch() {
 
 // ---------------------------------------------------------------- WiFi, web page, OTA
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Show Jumping</title><style>body{font:16px system-ui;background:#10241a;color:#eaf2e6;max-width:560px;margin:0 auto;padding:16px}
+<title>Show Jumping</title><link rel="icon" href="/favicon.ico"><style>body{font:16px system-ui;background:#10241a;color:#eaf2e6;max-width:560px;margin:0 auto;padding:16px}
 h1{margin:0 0 4px}small{color:#9fb59a}.c{background:#183626;border-radius:10px;padding:14px;margin:12px 0}
 label{display:block;margin:8px 0}input[type=text]{background:#10241a;color:#eaf2e6;border:1px solid #3c6a4c;border-radius:6px;padding:4px}
 button{background:#d8b44a;color:#10241a;border:0;border-radius:6px;padding:8px 12px;margin:4px 4px 4px 0;font-weight:600;cursor:pointer}
@@ -1163,8 +1163,15 @@ static bool numArg(const char *name, int lo, int hi, int &out) {
   return true;
 }
 
+extern const uint8_t favicon_start[] asm("_binary_src_favicon_ico_start");
+extern const uint8_t favicon_end[] asm("_binary_src_favicon_ico_end");
+
 static void setupWeb() {
   server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", PAGE); });
+  server.on("/favicon.ico", HTTP_GET, []() {
+    server.sendHeader("Cache-Control", "max-age=86400");
+    server.send_P(200, "image/x-icon", (PGM_P)favicon_start, favicon_end - favicon_start);
+  });
   // Raw copy of the screen (RGB565, big-endian) for screenshots.
   server.on("/api/frame", HTTP_GET, []() {
     server.setContentLength(PANEL_W * PANEL_H * 2);
