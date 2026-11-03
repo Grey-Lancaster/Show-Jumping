@@ -21,7 +21,7 @@
 #include "wifi_setup.h"
 #include "audio.h"
 
-#define FW_VERSION "0.1.2"
+#define FW_VERSION "0.1.5"
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite strip = TFT_eSprite(&tft);    // one horizontal strip of the panel
@@ -44,6 +44,7 @@ static bool g_online = false;
 static uint32_t restartAt = 0, infoUntil = 0;
 static float g_fps = 0;
 static uint32_t g_frameNo = 0;
+static float curT = 0;             // seconds, for animation (flags, ripples)
 
 static void saveSettings() {
   prefs.putBool("invert", g_invert); prefs.putBool("swaprb", g_swaprb);
@@ -96,7 +97,7 @@ static void initRiders() {
 // ---------------------------------------------------------------- the course
 enum FType { F_VERT, F_OXER, F_WALL };
 struct Part { float off, h, fall; bool checked; };   // off: along x (local units), h: top rail height (local units)
-struct Fence { int lane; float x; FType type; uint16_t c1, c2; int np; Part p[2]; bool knocked; };
+struct Fence { int lane; float x; FType type; uint16_t c1, c2; int np; Part p[2]; bool knocked, water; };   // water: a blue tray under it
 static Fence fences[5];
 #define NFENCE 5
 
@@ -108,6 +109,7 @@ static void initCourse() {
   fences[2] = {1, 318, F_WALL, RGB(30, 140, 70), W, 1, {{0, 38}}};
   fences[3] = {1, 204, F_VERT, RGB(130, 50, 160), W, 1, {{0, 38}}};
   fences[4] = {1, 90, F_OXER, RGB(240, 180, 30), RGB(40, 90, 190), 2, {{-8, 36}, {8, 34}}};
+  fences[3].water = true;
 }
 
 static void resetCourse() {
@@ -130,10 +132,18 @@ struct Horse {
   bool turning;       // on the U-turn from the near line to the far line
   float th, tx0;      // turn: angle 0..pi, and the x it started from
   float pace;         // this round's speed: the horse's own pace, a little faster or slower on the day
+  int ref;            // refusal: RF_NONE, or where he is in stopping, turning away and coming back round
+  float spd;          // 0..1 of full canter speed (he slows to a stop when he refuses)
+  float rx, laneGy;   // refusal: where he turned (or when he stopped), and the lane row he loops away from and back to
+  float stopX, brake; // refusal: where his nose stops short of the fence, and over how many px he slows down
 };
+enum Refusal { RF_NONE, RF_BRAKE, RF_HOLD, RF_AWAY, RF_BACK };
+#define REFUSE_CHANCE 100   // percent of auto rounds with one refusal (every round for now, to watch it)
+#define REFUSE_AWAY 110     // how far he goes back before turning to try again (local units)
 static Horse horse;
-struct Round { RoundSt st; float t; int rider; bool you; float time; bool timing, started; int faults; int nf; };
-static Round rnd = {R_WAIT, 0, 0, false, 0, false, false, 0, 0};
+struct Round { RoundSt st; float t; int rider; bool you; float time; bool timing, started; int faults; int nf;
+               int refuseAt, refusals; bool elim; uint32_t msgFrom, msgUntil; bool pendFault; };   // the refusal box shows msgFrom..msgUntil   // refuseAt: the fence the auto horse stops at, or -1
+static Round rnd = {R_WAIT, 0, 0, false, 0, false, false, 0, 0, -1, 0, false, 0, 0, false};
 
 struct Result { char name[24]; int faults; float time; };
 static Result board[5];
@@ -161,6 +171,8 @@ static float autoErr() { return (float)(random(-20, 21) + random(-20, 21) + rand
 static void startRide() {
   resetCourse();
   rnd.st = R_RIDE; rnd.t = 0; rnd.time = 0; rnd.timing = false; rnd.started = false; rnd.faults = 0; rnd.nf = 0;
+  rnd.refuseAt = random(100) < REFUSE_CHANCE ? random(NFENCE) : -1; rnd.refusals = 0; rnd.elim = false; rnd.msgFrom = rnd.msgUntil = 0; rnd.pendFault = false;
+  horse.ref = RF_NONE; horse.spd = 1;
   horse.x = -70; horse.lane = 0; horse.gy = LANE_Y[0]; horse.dir = 1; horse.air = false; horse.turning = false; horse.err = autoErr();
   horse.pace = RIDERS[rnd.rider].pace * (0.97f + random(61) / 1000.0f);
   audioBell();
@@ -170,7 +182,7 @@ static void nextRider() {
   rnd.rider = (rnd.rider + 1) % NRIDERS;
   rnd.you = false; rnd.st = R_WAIT; rnd.t = 0;
   resetCourse();
-  horse.x = -200; horse.gy = LANE_Y[0]; horse.turning = false; horse.air = false;
+  horse.x = -200; horse.gy = LANE_Y[0]; horse.turning = false; horse.air = false; horse.ref = RF_NONE; horse.spd = 1;
 }
 
 static void startJump(float len, float peak) {
@@ -183,7 +195,7 @@ static void jumpFence(const Fence &f) { startJump(jumpLen(f), fenceTop(f) + 4); 
 
 // A tap: take off now. The jump is sized for the next fence if it is close ahead, else a little hop.
 static void tapJump() {
-  if (horse.air || horse.turning || horse.x < -10 || horse.x > VW + 10) return;
+  if (horse.air || horse.turning || (horse.ref != RF_NONE && horse.ref != RF_BACK) || horse.x < -10 || horse.x > VW + 10) return;
   rnd.you = true;
   const float s = scaleAt(horse.gy);
   if (rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
@@ -205,7 +217,7 @@ static void updateRound(float dt) {
   if (rnd.timing) rnd.time += dt;
   if (horse.x > -90 && horse.x < VW + 90) {
     const float s = scaleAt(horse.gy);
-    const float v = 118 * s * horse.pace;
+    const float v = 118 * s * horse.pace * horse.spd;
     if (horse.turning) {                   // along the arc at the same speed; he faces the other way past the apex
       const float half = (LANE_Y[0] - LANE_Y[1]) * 0.5f;
       const float spd = sqrtf(sq(TURN_R * cosf(horse.th)) + sq(half * sinf(horse.th))) + 1;
@@ -229,14 +241,57 @@ static void updateRound(float dt) {
       if (onScreen && rnd.st == R_RIDE)
         for (float b : BEATS) if ((prev < b && cur >= b) || (cur < prev && (b > prev || b <= cur))) audioHoof(0.35f + 0.3f * s);
     }
+    // refusals: the auto horse stops at one fence a round; yours stops at any fence you don't jump. He props to a halt,
+    // the rider turns him away, loops back round and tries again. 4 faults each; a second one for you is elimination.
+    if (rnd.st == R_RIDE && horse.ref == RF_NONE && !horse.air && !horse.turning && rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
+      const Fence &f = fences[rnd.nf];
+      const float ahead = (f.x - horse.x) * horse.dir;
+      // stop with his nose just short of the rails: the auto horse brakes over a stride, yours stops short and late
+      const float stopAhead = (rnd.you ? 38 : 44) * s, brake = (rnd.you ? 10 : 34) * s;
+      if ((!rnd.you && rnd.nf == rnd.refuseAt && ahead <= stopAhead + brake) || (rnd.you && ahead <= stopAhead + brake)) {
+        horse.ref = RF_BRAKE; horse.laneGy = horse.gy;
+        horse.stopX = f.x - horse.dir * stopAhead; horse.brake = brake;
+        rnd.refusals++;
+        if (rnd.you && rnd.refusals >= 2) rnd.elim = true;
+      }
+    }
+    if (horse.ref == RF_BRAKE) {
+      const float rem = (horse.stopX - horse.x) * horse.dir;      // even braking: speed ~ sqrt(distance left)
+      horse.spd = sqrtf(clamp01(rem / horse.brake));
+      if (horse.spd < 0.08f) {                    // stopped: the refusal (and its 4 faults) is called 1.5 s later
+        horse.spd = 0; horse.ref = RF_HOLD; horse.rx = rnd.t;
+        rnd.msgFrom = millis() + 1500; rnd.msgUntil = rnd.msgFrom + 2500; rnd.pendFault = true;
+      }
+    } else if (horse.ref == RF_HOLD) {
+      if (rnd.t - horse.rx > (rnd.elim ? 1.5f : 1.1f)) {   // eliminated: the banner comes up at the same 1.5 s
+        horse.dir = -horse.dir; horse.rx = horse.x;
+        if (rnd.elim) {                             // that's it: he canters off the way he came
+          horse.ref = RF_NONE; horse.spd = 1; rnd.timing = false;
+          rnd.st = R_DONE; rnd.t = 0; lastWasLeader = false;
+          audioApplause(1.2f);
+        } else horse.ref = RF_AWAY;
+      }
+    } else if (horse.ref == RF_AWAY || horse.ref == RF_BACK) {
+      horse.spd = min(1.0f, horse.spd + dt * 1.8f);
+      const float d = fabsf(horse.x - horse.rx) / (REFUSE_AWAY * s), side = horse.lane == 0 ? -12 : 12;   // loop out toward the middle
+      if (horse.ref == RF_AWAY) {
+        horse.gy = horse.laneGy + side * clamp01(d);
+        if (d >= 1) { horse.ref = RF_BACK; horse.dir = -horse.dir; horse.rx = horse.x; rnd.refuseAt = -1; horse.err = autoErr() * 0.3f; }
+      } else {
+        horse.gy = horse.laneGy + side * (1 - clamp01(d));
+        if (d >= 1) { horse.ref = RF_NONE; horse.gy = horse.laneGy; }
+      }
+    }
+    if (rnd.pendFault && millis() >= rnd.msgFrom) { rnd.pendFault = false; if (rnd.st == R_RIDE) rnd.faults += 4; }
+    const bool approaching = horse.ref == RF_NONE || horse.ref == RF_BACK;
     // the auto rider takes off by itself (a little early or late now and then)
-    if (rnd.st == R_RIDE && !rnd.you && !horse.air && rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
+    if (rnd.st == R_RIDE && approaching && !rnd.you && rnd.nf != rnd.refuseAt && !horse.air && rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
       const Fence &f = fences[rnd.nf];
       const float tx = f.x - horse.dir * (jumpLen(f) * 0.5f + horse.err) * s;
       if ((horse.x - tx) * horse.dir >= 0) jumpFence(f);
     }
     // passing each element: high enough, or the top rail comes down
-    if (rnd.st == R_RIDE && rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
+    if (rnd.st == R_RIDE && approaching && rnd.nf < NFENCE && fences[rnd.nf].lane == horse.lane) {
       Fence &f = fences[rnd.nf];
       bool all = true;
       for (int k = 0; k < f.np; k++) {
@@ -262,7 +317,7 @@ static void updateRound(float dt) {
         audioApplause(rnd.faults == 0 ? 4.5f : 2.0f);
       }
     }
-    if (horse.lane == 0 && !horse.turning && !horse.air && horse.x >= TURN_X && rnd.st == R_RIDE) { horse.turning = true; horse.th = 0; horse.tx0 = horse.x; }
+    if (horse.lane == 0 && approaching && !horse.turning && !horse.air && horse.x >= TURN_X && rnd.st == R_RIDE) { horse.turning = true; horse.th = 0; horse.tx0 = horse.x; }
   }
   if (rnd.st == R_DONE && rnd.t > 8) nextRider();
 }
@@ -317,6 +372,18 @@ static void drawFence(const Fence &f, bool front) {
       continue;
     }
     cv.drawWideLine(px - dx, ly + dy, px + dx, ly - dy, 1.6f * s, g_sandDark, g_sandDark);    // its shadow on the sand
+    if (f.water) {                                   // a tray of water under the rails, as wide as the fence, a little deep
+      const float w = 11 * s;
+      const uint16_t deep = RGB(30, 96, 200), rim = RGB(150, 200, 250);
+      cv.fillTriangle(px - dx - w, ly + dy, px - dx + w, ly + dy, px + dx + w, ly - dy, deep);
+      cv.fillTriangle(px - dx - w, ly + dy, px + dx + w, ly - dy, px + dx - w, ly - dy, deep);
+      cv.drawLine(px - dx - w, ly + dy, px + dx - w, ly - dy, rim);
+      cv.drawLine(px - dx + w, ly + dy, px + dx + w, ly - dy, rim);
+      for (int r = 0; r < 3; r++) {                  // ripples that drift along the tray
+        const float a = fmodf(curT * 0.35f + r / 3.0f, 1.0f), x0 = lerpf(px - dx, px + dx, a), y0 = lerpf(ly + dy, ly - dy, a);
+        cv.drawLine(x0 - w * 0.5f, y0, x0 + w * 0.3f, y0, RGB(110, 170, 240));
+      }
+    }
     standard(px + dx, ly - dy, hs, s, f.c1, 1, wing);
     // lower rails, or the wall
     if (f.type == F_WALL) {
@@ -399,6 +466,10 @@ static void legPose(int i, float &a1, float &a2) {
     float b1, b2; jumpLeg(horse.u, front, b1, b2);
     a1 = lerpf(a1, b1, k); a2 = lerpf(a2, b2, k);
   }
+  if (horse.spd < 1) {                     // slowing to a halt: legs come under him (fronts braced a little forward)
+    const float st = 1 - horse.spd;
+    a1 = lerpf(a1, front ? 0.25f : -0.32f, st); a2 = lerpf(a2, front ? 0.2f : 0.12f, st);
+  }
 }
 
 static void drawHorse() {
@@ -409,7 +480,9 @@ static void drawHorse() {
   const float k = horse.air ? clamp01(min(horse.u, 1 - horse.u) * 6) : 0;   // how far into the jump pose
   const float stride = horse.ph * 2 * PI;
   float lift = horse.air ? 4 * horse.jH * horse.u * (1 - horse.u) : 1.2f * fabsf(sinf(stride * 0.5f + 0.6f));
-  float pitch = horse.air ? 0.38f * (1 - 2 * horse.u) * clamp01(sinf(PI * horse.u) * 3) : 0.05f * sinf(stride);
+  float pitch = horse.air ? 0.38f * (1 - 2 * horse.u) * clamp01(sinf(PI * horse.u) * 3) : 0.05f * sinf(stride) * horse.spd;
+  const float prop = (horse.ref == RF_BRAKE || horse.ref == RF_HOLD) ? 1 - horse.spd : 0;   // propping: front end up, rider pitched forward
+  pitch += 0.12f * prop;
   if (!cv.visible(ly - (80 + lift) * s, ly + 8 * s)) return;
   HP p = {horse.x, ly, s, lift, cosf(pitch), sinf(pitch), horse.dir};
 
@@ -451,7 +524,7 @@ static void drawHorse() {
   hCircle(p, -4.5f, 46, 1.8f, RGB(92, 52, 26));
 
   // rider: two-point over the fence, sitting up between them
-  const float lean = lerpf(0.24f + 0.04f * sinf(stride * 2), 0.95f, k);
+  const float lean = lerpf(0.24f + 0.04f * sinf(stride * 2), 0.95f, k) + 0.5f * prop;
   const float hipX = -1, hipY = 47 + 2.5f * k;
   const float shX = hipX + 17 * sinf(lean), shY = hipY + 17 * cosf(lean);
   const float hdX = hipX + 23 * sinf(lean), hdY = hipY + 23 * cosf(lean);
@@ -558,13 +631,20 @@ static void drawScoreboard() {
     cv.setTextColor(RGB(250, 214, 80));
     cv.drawString(rnd.you ? "Your round! Tap to jump each fence" : "Tap the screen to ride this round yourself", 240, 184, 2);
   }
+  if (rnd.st == R_RIDE && millis() >= rnd.msgFrom && rnd.msgUntil > millis() && cv.visible(52, 90)) {           // up over the crowd, clear of both lines
+    panel(160, 54, 160, 34);
+    cv.setTextDatum(MC_DATUM); cv.setTextColor(RGB(255, 170, 70));
+    cv.drawString(rnd.elim ? "2nd REFUSAL" : "REFUSAL  +4", 240, 71, 4);
+  }
   if (rnd.st == R_DONE && cv.visible(146, 214)) {
     panel(120, 148, 240, 64);
     cv.setTextDatum(MC_DATUM);
-    if (rnd.faults == 0) { cv.setTextColor(RGB(120, 240, 120)); cv.drawString("CLEAR ROUND!", 240, 168, 4); }
+    if (rnd.elim) { cv.setTextColor(RGB(255, 90, 80)); cv.drawString("ELIMINATED", 240, 168, 4); }
+    else if (rnd.faults == 0) { cv.setTextColor(RGB(120, 240, 120)); cv.drawString("CLEAR ROUND!", 240, 168, 4); }
     else { cv.setTextColor(RGB(255, 170, 70)); snprintf(b, sizeof(b), "%d FAULTS", rnd.faults); cv.drawString(b, 240, 168, 4); }
     cv.setTextColor(RGB(255, 255, 255));
-    snprintf(b, sizeof(b), lastWasLeader ? "%.1f s   New leader!" : "Time %.1f s", rnd.time);
+    if (rnd.elim) snprintf(b, sizeof(b), "Two refusals");
+    else snprintf(b, sizeof(b), lastWasLeader ? "%.1f s   New leader!" : "Time %.1f s", rnd.time);
     cv.drawString(b, 240, 196, 2);
   }
 }
@@ -694,7 +774,6 @@ static void bgCacheInit() {
   Serial.println("bgcache: ready");
 }
 
-static float curT = 0;
 static void renderStrip(int i) {
   cv.s = &strip; cv.oy = i * STRIP_H;
   if (bgCache) memcpy(strip.getPointer(), bgCache + (size_t)i * PANEL_W * STRIP_H * 2, (size_t)PANEL_W * STRIP_H * 2);
